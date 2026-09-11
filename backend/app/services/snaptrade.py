@@ -177,6 +177,17 @@ class SnapTradeSyncService:
 
     def create_portal(self) -> str:
         self._require_enabled()
+        status = str(self.repository.snaptrade_state().get("connection_status") or "")
+        if status == "connected_read_only":
+            raise SnapTradeSyncError(
+                "Wealthsimple is already connected read-only. Use Sync instead of opening "
+                "another authentication session."
+            )
+        if status == "disconnect_pending":
+            raise SnapTradeSyncError(
+                "SnapTrade is still processing the previous disconnection. Use Check Status "
+                "and wait until it reports Not Connected before reconnecting."
+            )
         try:
             return self.client.create_connection_portal(self.redirect_uri)
         except SnapTradeCredentialsUnavailable:
@@ -186,6 +197,79 @@ class SnapTradeSyncService:
             ) from None
         except SnapTradeError as exc:
             raise SnapTradeSyncError(str(exc)) from exc
+
+    def check_connection(self) -> dict[str, Any]:
+        """Refresh connection state without requesting accounts or holdings."""
+        self._require_enabled()
+        try:
+            connections = [
+                row for row in self.client.list_connections() if self._is_wealthsimple(row)
+            ]
+        except SnapTradeCredentialsUnavailable:
+            self._record_credentials_missing()
+            return self.status()
+        except SnapTradeError as exc:
+            raise SnapTradeSyncError(str(exc)) from exc
+
+        checked_at = self.clock().isoformat()
+        previous = str(
+            self.repository.snaptrade_state().get("connection_status") or "not_checked"
+        )
+        if previous == "disconnect_pending":
+            updates: dict[str, Any] = {
+                "connection_status": "disconnect_pending" if connections else "not_connected",
+                "connection_permission": None,
+                "brokerage_name": "Wealthsimple",
+                "last_checked_at": checked_at,
+                "warning": (
+                    "SnapTrade is still processing the Wealthsimple disconnection."
+                    if connections
+                    else None
+                ),
+            }
+            if not connections:
+                updates["connection_fingerprint"] = None
+            self.repository.update_snaptrade_state(**updates)
+            return self.status()
+
+        if not connections:
+            self.repository.update_snaptrade_state(
+                connection_status="not_connected",
+                connection_permission=None,
+                brokerage_name="Wealthsimple",
+                connection_fingerprint=None,
+                last_checked_at=checked_at,
+                warning=None,
+            )
+            return self.status()
+
+        unsafe = [row for row in connections if str(row.get("type") or "").lower() != "read"]
+        active = [row for row in connections if not bool(row.get("disabled"))]
+        disabled = [row for row in connections if bool(row.get("disabled"))]
+        if unsafe:
+            connection_status = "rejected_trade_enabled"
+            permission = str(unsafe[0].get("type") or "unknown")
+            warning = "A non-read-only Wealthsimple connection was rejected."
+        elif not active:
+            connection_status = "disabled_connection"
+            permission = "read"
+            warning = "Every Wealthsimple connection reported by SnapTrade is disabled."
+        else:
+            connection_status = "connected_read_only"
+            permission = "read"
+            warning = (
+                "One or more additional Wealthsimple connections are disabled."
+                if disabled
+                else None
+            )
+        self.repository.update_snaptrade_state(
+            connection_status=connection_status,
+            connection_permission=permission,
+            brokerage_name="Wealthsimple",
+            last_checked_at=checked_at,
+            warning=warning,
+        )
+        return self.status()
 
     @staticmethod
     def _is_wealthsimple(connection: dict[str, Any]) -> bool:
@@ -513,6 +597,63 @@ class SnapTradeSyncService:
             "can_apply": not any(issue["severity"] == "error" for issue in issues),
         }
 
+    def _reconcile_known_instrument_identities(
+        self, preview: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Keep established local identity when a brokerage asset label disagrees."""
+        current = self.portfolio.latest()
+        known = {
+            row["canonical_symbol"]: {
+                "asset_type": row["asset_type"],
+                "exchange": row["exchange"],
+                "trading_currency": row["trading_currency"],
+            }
+            for row in (current or {}).get("holdings") or []
+        }
+        rows = [dict(row) for row in preview["rows"]]
+        issues = [dict(issue) for issue in preview["issues"]]
+        existing_issues = {(issue.get("code"), issue.get("symbol")) for issue in issues}
+
+        for row in rows:
+            symbol = row["canonical_symbol"]
+            identity = known.get(symbol)
+            if identity is None:
+                continue
+            if (
+                row["exchange"] != identity["exchange"]
+                or row["trading_currency"] != identity["trading_currency"]
+            ):
+                key = ("STORED_IDENTITY_CONFLICT", symbol)
+                if key not in existing_issues:
+                    issues.append(
+                        _issue(
+                            "error",
+                            key[0],
+                            f"{symbol} conflicts with its stored exchange or currency; "
+                            "the identity must be reviewed before applying.",
+                            symbol=symbol,
+                        )
+                    )
+                    existing_issues.add(key)
+                continue
+            if row["asset_type"] != identity["asset_type"]:
+                reported_type = row["asset_type"]
+                row["asset_type"] = identity["asset_type"]
+                key = ("BROKERAGE_ASSET_TYPE_CONFLICT", symbol)
+                if key not in existing_issues:
+                    issues.append(
+                        _issue(
+                            "warning",
+                            key[0],
+                            f"SnapTrade classified {symbol} as {reported_type}; the existing "
+                            f"local {identity['asset_type']} classification was retained.",
+                            symbol=symbol,
+                        )
+                    )
+                    existing_issues.add(key)
+
+        return {**preview, "rows": rows, "issues": issues}
+
     def preview_sync(self) -> dict[str, Any]:
         self._require_enabled()
         self._enforce_sync_interval()
@@ -663,6 +804,11 @@ class SnapTradeSyncService:
                     "SnapTrade holdings are more than 36 hours old.",
                 )
             )
+        reconciled = self._reconcile_known_instrument_identities(
+            {"rows": rows, "issues": issues}
+        )
+        rows = reconciled["rows"]
+        issues = reconciled["issues"]
         changes = self._changes(self.portfolio.latest(), rows)
         preview = self.repository.create_snaptrade_preview(
             rows=rows,
@@ -682,14 +828,23 @@ class SnapTradeSyncService:
 
     def apply_preview(self, preview_id: str) -> dict[str, str]:
         self._require_enabled()
-        snapshot_id = self.repository.persist_snaptrade_preview(preview_id)
+        preview = self._reconcile_known_instrument_identities(
+            self.repository.snaptrade_preview(preview_id)
+        )
+        snapshot_id = self.repository.persist_snaptrade_preview(
+            preview_id,
+            rows_override=preview["rows"],
+            issues_override=preview["issues"],
+        )
         valuation_id = self.portfolio.refresh(snapshot_id)
         return {"holding_snapshot_id": snapshot_id, "valuation_snapshot_id": valuation_id}
 
     def pending_preview(self) -> dict[str, Any] | None:
         """Recover a local preview without making a new brokerage request."""
         preview = self.repository.latest_snaptrade_preview()
-        return self._public_preview(preview) if preview else None
+        if preview is None:
+            return None
+        return self._public_preview(self._reconcile_known_instrument_identities(preview))
 
     def cancel_preview(self, preview_id: str) -> None:
         self.repository.delete_snaptrade_preview(preview_id)

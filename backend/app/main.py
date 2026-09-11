@@ -105,6 +105,16 @@ def snaptrade_status(service: SnapTradeSyncService = Depends(snaptrade_service))
     return service.status()
 
 
+@app.post("/api/snaptrade/connection/check", dependencies=[Depends(require_local_write)])
+def check_snaptrade_connection(
+    service: SnapTradeSyncService = Depends(snaptrade_service),
+) -> dict:
+    try:
+        return service.check_connection()
+    except SnapTradeSyncError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/api/snaptrade/portal", dependencies=[Depends(require_local_write)])
 def snaptrade_portal(service: SnapTradeSyncService = Depends(snaptrade_service)) -> dict[str, str]:
     try:

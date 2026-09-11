@@ -30,6 +30,14 @@ class YahooDailyPriceProvider:
 
     @staticmethod
     def provider_symbol(canonical_symbol: str) -> str:
+        # TSX uses dots for a single class suffix (for example HPS.A), while
+        # Yahoo represents the same suffix with a hyphen (HPS-A.TO). Keep the
+        # canonical exchange symbol in SQLite and translate only at this boundary.
+        for exchange_suffix in (".TO", ".V"):
+            if canonical_symbol.endswith(exchange_suffix):
+                base = canonical_symbol[: -len(exchange_suffix)]
+                if base.count(".") == 1:
+                    return f"{base.replace('.', '-')}{exchange_suffix}"
         return canonical_symbol
 
     def quote(self, instrument: dict[str, Any]) -> dict[str, Any]:

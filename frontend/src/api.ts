@@ -41,6 +41,14 @@ export async function getSnapTradeStatus(): Promise<SnapTradeStatus> {
   return responseJson<SnapTradeStatus>(response);
 }
 
+export async function checkSnapTradeConnection(): Promise<SnapTradeStatus> {
+  const response = await fetch("/api/snaptrade/connection/check", {
+    method: "POST",
+    headers: WRITE_HEADERS,
+  });
+  return responseJson<SnapTradeStatus>(response);
+}
+
 export async function getPriceCapabilities(): Promise<PriceCapabilities> {
   const response = await fetch("/api/prices/capabilities");
   return responseJson<PriceCapabilities>(response);

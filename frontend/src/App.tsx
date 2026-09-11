@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   applySnapTradeSync,
   cancelSnapTradeSync,
+  checkSnapTradeConnection,
   createSnapTradePortal,
   deleteLocalBrokerageData,
   disconnectSnapTrade,
@@ -175,6 +176,9 @@ export function App() {
   const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>(initialColumns);
   const automaticSyncAttempted = useRef(false);
+  const returnedFromPortal = useRef(
+    new URLSearchParams(window.location.search).get("snaptrade") === "connected",
+  );
 
   async function load() {
     const [current, points, analysis, connection, priceSupport, pendingPreview] = await Promise.all([
@@ -196,7 +200,29 @@ export function App() {
   }
 
   useEffect(() => {
-    void load().catch((cause) =>
+    async function initialize() {
+      if (returnedFromPortal.current) {
+        returnedFromPortal.current = false;
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("snaptrade");
+        window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+        setSnaptradeBusy(true);
+        try {
+          const checked = await checkSnapTradeConnection();
+          setNotice(
+            checked.connection_status === "connected_read_only"
+              ? "SnapTrade connection confirmed. Portfolio Manager will prepare a holdings preview when synchronization is available."
+              : "SnapTrade returned to Portfolio Manager. Check the connection status before trying Connect again.",
+          );
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : "Unable to verify SnapTrade connection");
+        } finally {
+          setSnaptradeBusy(false);
+        }
+      }
+      await load();
+    }
+    void initialize().catch((cause) =>
       setError(cause instanceof Error ? cause.message : "Unable to load portfolio"),
     );
   }, []);
@@ -264,8 +290,31 @@ export function App() {
     }
   }
 
+  async function checkConnection() {
+    setSnaptradeBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const checked = await checkSnapTradeConnection();
+      await load();
+      setNotice(
+        checked.connection_status === "connected_read_only"
+          ? "Wealthsimple is connected read-only. Use Sync; do not open another connection session."
+          : "Connection status refreshed.",
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to check SnapTrade connection");
+    } finally {
+      setSnaptradeBusy(false);
+    }
+  }
+
   async function applySync() {
-    if (!syncPreview || !confirmSync) return;
+    if (!syncPreview) return;
+    if (!confirmSync) {
+      setError("Select the required review-confirmation checkbox before applying the snapshot.");
+      return;
+    }
     setSnaptradeBusy(true);
     setError(null);
     try {
@@ -439,6 +488,7 @@ export function App() {
         busy={snaptradeBusy}
         previewOpen={Boolean(syncPreview)}
         onConnect={() => void openSnapTradePortal()}
+        onCheckConnection={() => void checkConnection()}
         onSync={() => void startSnapTradeSync()}
         onDisconnect={() => void disconnect()}
         onDeleteLocalData={() => void deleteBrokerageData()}
@@ -541,7 +591,11 @@ export function App() {
         <section className="sheet empty-state">
           <div className="empty-title">NO PORTFOLIO LOADED</div>
           <p>Connect Wealthsimple through SnapTrade's read-only portal, preview the synchronized holdings, and approve the first snapshot.</p>
-          <button className="button primary" disabled={!snaptradeStatus?.adapter_enabled || snaptradeBusy} onClick={() => void openSnapTradePortal()}>CONNECT WEALTHSIMPLE</button>
+          {snaptradeStatus?.connection_status === "connected_read_only" ? (
+            <button className="button primary" disabled={!snaptradeStatus.sync_allowed || snaptradeBusy || Boolean(syncPreview)} onClick={() => void startSnapTradeSync()}>SYNC WEALTHSIMPLE</button>
+          ) : (
+            <button className="button primary" disabled={!canOpenConnectionPortal(snaptradeStatus) || snaptradeBusy} onClick={() => void openSnapTradePortal()}>CONNECT WEALTHSIMPLE</button>
+          )}
         </section>
       )}
 
@@ -573,12 +627,20 @@ function connectionLabel(status: SnapTradeStatus | null): string {
   return labels[status.connection_status] ?? status.connection_status.replaceAll("_", " ").toUpperCase();
 }
 
+function canOpenConnectionPortal(status: SnapTradeStatus | null): boolean {
+  return Boolean(
+    status?.adapter_enabled
+    && ["not_checked", "not_connected"].includes(status.connection_status),
+  );
+}
+
 function SnapTradeConnectionPanel({
   status,
   priceCapabilities,
   busy,
   previewOpen,
   onConnect,
+  onCheckConnection,
   onSync,
   onDisconnect,
   onDeleteLocalData,
@@ -588,11 +650,20 @@ function SnapTradeConnectionPanel({
   busy: boolean;
   previewOpen: boolean;
   onConnect: () => void;
+  onCheckConnection: () => void;
   onSync: () => void;
   onDisconnect: () => void;
   onDeleteLocalData: () => void;
 }) {
   const connected = status?.connection_status === "connected_read_only";
+  const checkingUseful = Boolean(status?.adapter_enabled && [
+    "credentials_missing",
+    "not_connected",
+    "connected_read_only",
+    "disabled_connection",
+    "rejected_trade_enabled",
+    "disconnect_pending",
+  ].includes(status.connection_status));
   const canDisconnect = Boolean(status?.adapter_enabled && [
     "connected_read_only",
     "disabled_connection",
@@ -619,7 +690,8 @@ function SnapTradeConnectionPanel({
       )}
       <div className="connection-actions">
         <span>Wealthsimple credentials and MFA are entered only in SnapTrade's portal.</span>
-        {!connected && <button className="button primary" disabled={!status?.adapter_enabled || busy} onClick={onConnect}>CONNECT</button>}
+        {!connected && <button className="button primary" disabled={!canOpenConnectionPortal(status) || busy} onClick={onConnect}>CONNECT</button>}
+        {checkingUseful && <button className="button" disabled={busy} onClick={onCheckConnection}>CHECK STATUS</button>}
         <button className="button" disabled={!status?.adapter_enabled || !status.sync_allowed || busy || previewOpen} onClick={onSync}>{busy ? "WORKING…" : "SYNC"}</button>
         <button className="button danger" disabled={!canDisconnect || busy} onClick={onDisconnect}>DISCONNECT</button>
         <button className="button danger quiet" disabled={busy} onClick={onDeleteLocalData}>DELETE LOCAL BROKERAGE DATA</button>
@@ -687,9 +759,9 @@ function SnapTradePreviewPanel({ preview, busy, confirmed, setConfirmed, onApply
         </table>
       </div>
       <div className="sync-apply-bar">
-        <label className="check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I reviewed every addition, removal and changed value</label>
+        <label className="check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><strong>REQUIRED:</strong> I reviewed every addition, removal and changed value</label>
         <span>Applying creates a new immutable local snapshot. It cannot place an order.</span>
-        <button className="button primary" disabled={busy || !confirmed || !preview.can_apply} onClick={onApply}>APPLY SNAPSHOT</button>
+        <button className="button primary" disabled={busy || !preview.can_apply} onClick={onApply}>APPLY SNAPSHOT</button>
       </div>
     </section>
   );

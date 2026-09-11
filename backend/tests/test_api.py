@@ -86,7 +86,7 @@ class SyntheticSnapTrade:
             "results": [
                 {
                     "instrument": {
-                        "kind": "etf",
+                        "kind": "stock",
                         "symbol": "XIC",
                         "description": "iShares Core S&P/TSX Capped Composite Index ETF",
                         "currency": "CAD",
@@ -174,6 +174,18 @@ def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -
     assert portal.status_code == 200
     assert portal.json()["redirect_uri"].startswith("https://app.snaptrade.com/")
 
+    connection_check = client.post(
+        "/api/snaptrade/connection/check",
+        headers={"X-Portfolio-Manager": "local-ui"},
+    )
+    assert connection_check.status_code == 200
+    assert connection_check.json()["connection_status"] == "connected_read_only"
+    repeated_portal = client.post(
+        "/api/snaptrade/portal", headers={"X-Portfolio-Manager": "local-ui"}
+    )
+    assert repeated_portal.status_code == 409
+    assert "already connected" in repeated_portal.json()["detail"]
+
     preview_response = client.post(
         "/api/snaptrade/sync/preview", headers={"X-Portfolio-Manager": "local-ui"}
     )
@@ -183,6 +195,12 @@ def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -
     assert len(preview["changes"]["cost_basis_changes"]) == 1
     assert len(preview["changes"]["cash_changes"]) == 1
     assert preview["can_apply"] is True
+    xic = next(row for row in preview["positions"] if row["canonical_symbol"] == "XIC.TO")
+    assert xic["asset_type"] == "ETF"
+    assert any(
+        issue["code"] == "BROKERAGE_ASSET_TYPE_CONFLICT"
+        for issue in preview["issues"]
+    )
     assert ACCOUNT_ID not in preview_response.text
     assert "SENSITIVE-ACCOUNT-NUMBER" not in preview_response.text
 
@@ -235,6 +253,18 @@ def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -
     )
     assert disconnect.status_code == 200
     assert synthetic.disconnected == [CONNECTION_ID]
+
+    pending_check = client.post(
+        "/api/snaptrade/connection/check",
+        headers={"X-Portfolio-Manager": "local-ui"},
+    )
+    assert pending_check.status_code == 200
+    assert pending_check.json()["connection_status"] == "disconnect_pending"
+    reconnect_too_soon = client.post(
+        "/api/snaptrade/portal", headers={"X-Portfolio-Manager": "local-ui"}
+    )
+    assert reconnect_too_soon.status_code == 409
+    assert "still processing" in reconnect_too_soon.json()["detail"]
 
     rejected_deletion = client.request(
         "DELETE",

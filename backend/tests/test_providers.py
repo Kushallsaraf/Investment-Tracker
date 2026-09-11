@@ -5,6 +5,13 @@ from app.providers.fx import BankOfCanadaFxProvider
 from app.providers.prices import YahooDailyPriceProvider
 
 
+def test_yahoo_adapter_translates_single_tsx_class_suffix() -> None:
+    assert YahooDailyPriceProvider.provider_symbol("HPS.A.TO") == "HPS-A.TO"
+    assert YahooDailyPriceProvider.provider_symbol("BBD.B.TO") == "BBD-B.TO"
+    assert YahooDailyPriceProvider.provider_symbol("XIC.TO") == "XIC.TO"
+    assert YahooDailyPriceProvider.provider_symbol("BRK.B") == "BRK.B"
+
+
 def test_yahoo_adapter_returns_timestamped_eod_price() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

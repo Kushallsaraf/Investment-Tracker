@@ -43,6 +43,11 @@ See [SnapTrade security design and audit](docs/SNAPTRADE_SECURITY.md).
    timestamped, classified as real-time/delayed/end-of-day/stale, and used to
    calculate CAD portfolio values locally.
 
+After returning from SnapTrade's portal, the application verifies the connection
+before offering another Connect action. Disconnect is asynchronous: use **Check
+Status** until the state becomes **Not Connected**, then open exactly one new portal
+session. When already connected, use **Sync**, not **Connect**.
+
 The current Yahoo daily price adapter does not promise a safe 30–60 second refresh
 interval, so automatic quote polling remains off. A future provider can opt in only
 with a declared interval between 30 and 60 seconds.

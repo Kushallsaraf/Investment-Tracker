@@ -269,7 +269,14 @@ describe("App", () => {
     expect(await screen.findByText(/SYNC PREVIEW/)).toBeInTheDocument();
     expect(screen.getAllByText("XIC.TO")).toHaveLength(2);
     const applyButton = screen.getByRole("button", { name: "APPLY SNAPSHOT" });
-    expect(applyButton).toBeDisabled();
+    expect(applyButton).toBeEnabled();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/snaptrade/sync/preview-1/apply",
+      expect.anything(),
+    );
+
+    fireEvent.click(applyButton);
+    expect(await screen.findByText(/Select the required review-confirmation checkbox/)).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalledWith(
       "/api/snaptrade/sync/preview-1/apply",
       expect.anything(),

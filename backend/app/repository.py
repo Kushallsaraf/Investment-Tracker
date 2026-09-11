@@ -214,9 +214,17 @@ class PortfolioRepository:
         with self.database.transaction() as connection:
             connection.execute("DELETE FROM snaptrade_sync_previews WHERE id = ?", (preview_id,))
 
-    def persist_snaptrade_preview(self, preview_id: str) -> str:
+    def persist_snaptrade_preview(
+        self,
+        preview_id: str,
+        *,
+        rows_override: list[dict[str, Any]] | None = None,
+        issues_override: list[dict[str, Any]] | None = None,
+    ) -> str:
         preview = self.snaptrade_preview(preview_id)
-        if any(issue["severity"] == "error" for issue in preview["issues"]):
+        rows = rows_override if rows_override is not None else preview["rows"]
+        issues = issues_override if issues_override is not None else preview["issues"]
+        if any(issue["severity"] == "error" for issue in issues):
             raise ValueError("Resolve every synchronization error before applying this snapshot")
         snapshot_id = uuid.uuid4().hex
         applied_at = utc_now()
@@ -232,10 +240,10 @@ class PortfolioRepository:
                     applied_at,
                     f"snaptrade-preview:{preview_id}",
                     preview["holdings_as_of"],
-                    len(preview["rows"]),
+                    len(rows),
                 ),
             )
-            for row in preview["rows"]:
+            for row in rows:
                 account = connection.execute(
                     "SELECT id FROM accounts WHERE source_fingerprint = ?",
                     (row["account_fingerprint"],),
