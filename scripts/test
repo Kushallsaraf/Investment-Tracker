@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PATH="/opt/homebrew/bin:$PATH"
+export PATH
+
+"$PROJECT_DIR/.venv/bin/ruff" check "$PROJECT_DIR/backend"
+"$PROJECT_DIR/.venv/bin/pytest" "$PROJECT_DIR/backend/tests"
+npm --prefix "$PROJECT_DIR/frontend" test -- --run
+npm --prefix "$PROJECT_DIR/frontend" run build

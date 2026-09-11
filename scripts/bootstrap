@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PATH="/opt/homebrew/bin:$PATH"
+export PATH
+
+if command -v python3.12 >/dev/null 2>&1; then
+  PYTHON_BIN=$(command -v python3.12)
+elif command -v python3.11 >/dev/null 2>&1; then
+  PYTHON_BIN=$(command -v python3.11)
+else
+  echo "Portfolio Manager requires Python 3.11 or newer." >&2
+  exit 1
+fi
+
+"$PYTHON_BIN" -m venv --clear "$PROJECT_DIR/.venv"
+"$PROJECT_DIR/.venv/bin/python" -m pip install --upgrade pip
+"$PROJECT_DIR/.venv/bin/python" -m pip install -e "$PROJECT_DIR[dev]"
+npm --prefix "$PROJECT_DIR/frontend" install
+
+echo "Portfolio Manager dependencies are installed."

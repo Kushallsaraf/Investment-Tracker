@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PATH="/opt/homebrew/bin:$PATH"
+export PATH
+BACKEND_PID=""
+
+cleanup() {
+  if [ -n "$BACKEND_PID" ]; then
+    kill "$BACKEND_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+"$PROJECT_DIR/.venv/bin/uvicorn" app.main:app \
+  --app-dir "$PROJECT_DIR/backend" \
+  --host "${PORTFOLIO_MANAGER_HOST:-127.0.0.1}" \
+  --port "${PORTFOLIO_MANAGER_PORT:-8742}" \
+  --reload &
+BACKEND_PID=$!
+
+npm --prefix "$PROJECT_DIR/frontend" run dev

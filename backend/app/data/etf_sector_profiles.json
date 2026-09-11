@@ -1,0 +1,62 @@
+{
+  "AIQ.TO": {
+    "name": "Global X Artificial Intelligence & Technology Index ETF",
+    "issuer": "Global X Investments Canada Inc.",
+    "as_of": "2026-08-31",
+    "verified_on": "2026-09-08",
+    "source_url": "https://www.globalx.ca/product/aiq",
+    "method": "Issuer-published sector allocation, including the ETF's underlying investments",
+    "sectors": {
+      "Information Technology": 67.87,
+      "Communication Services": 16.60,
+      "Consumer Discretionary": 9.05,
+      "Industrials": 5.71,
+      "Health Care": 0.62,
+      "Financials": 0.11,
+      "Cash": 0.04
+    }
+  },
+  "VEQT.TO": {
+    "name": "Vanguard All-Equity ETF Portfolio",
+    "issuer": "Vanguard Investments Canada Inc.",
+    "as_of": "2026-07-31",
+    "verified_on": "2026-09-08",
+    "source_url": "https://fund-docs.vanguard.com/VEQT_All_Equity_ETF_Portfolio_9692_FS_EN_CA.pdf",
+    "method": "Issuer factsheet sectors across the underlying Vanguard funds; ICB labels normalized",
+    "sectors": {
+      "Information Technology": 24.8,
+      "Financials": 21.5,
+      "Industrials": 11.8,
+      "Consumer Discretionary": 9.7,
+      "Energy": 7.5,
+      "Materials": 7.3,
+      "Health Care": 6.0,
+      "Consumer Staples": 3.4,
+      "Utilities": 3.2,
+      "Communication Services": 2.6,
+      "Real Estate": 2.1,
+      "Other": 0.0
+    }
+  },
+  "ZEM.TO": {
+    "name": "BMO MSCI Emerging Markets Index ETF",
+    "issuer": "BMO Asset Management Inc.",
+    "as_of": "2026-04-30",
+    "verified_on": "2026-09-08",
+    "source_url": "https://df.bmogam.com/assets/static/etf-profiles-pdfs/BMO%20MSCI%20Emerging%20Markets%20Index%20ETF_Factsheet_EN_ZEM.pdf",
+    "method": "Issuer factsheet aggregate sector allocation",
+    "sectors": {
+      "Information Technology": 36.91,
+      "Financials": 20.18,
+      "Consumer Discretionary": 9.61,
+      "Industrials": 7.31,
+      "Communication Services": 6.86,
+      "Materials": 6.19,
+      "Energy": 4.10,
+      "Consumer Staples": 3.26,
+      "Health Care": 2.59,
+      "Utilities": 2.07,
+      "Real Estate": 0.93
+    }
+  }
+}
