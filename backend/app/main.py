@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -12,6 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.config import settings
 from app.database import Database
 from app.journal_repository import JournalRepository
+from app.market_repository import MarketRepository
 from app.providers.prices import UnsupportedSymbolError
 from app.repository import PortfolioRepository
 from app.schemas import (
@@ -26,13 +29,17 @@ from app.schemas import (
     ReviewPackRequest,
     SectorUpdateRequest,
     TriggerCreate,
+    WatchlistAdd,
 )
 from app.services.activities import ActivityService
 from app.services.analytics import AnalyticsService
 from app.services.journal import JournalService
+from app.services.market import MarketService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
 from app.services.sectors import SectorService
+
+T = TypeVar("T")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
@@ -65,6 +72,7 @@ _activity_service = ActivityService(_repository)
 _analytics_service = AnalyticsService(_repository, _sector_service)
 _journal_service = JournalService(_journal_repository, _repository)
 _research_service = ResearchService(_journal_repository, _repository, _sector_service)
+_market_service = MarketService(MarketRepository(_database))
 
 def portfolio_service() -> PortfolioService:
     return _portfolio_service
@@ -90,6 +98,26 @@ def research_service() -> ResearchService:
     return _research_service
 
 
+def market_service() -> MarketService:
+    return _market_service
+
+
+def _market_call(action: Callable[[], T]) -> T:
+    """Map market-data failures to HTTP errors shared by the market routes."""
+    try:
+        return action()
+    except UnsupportedSymbolError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Market data is unavailable ({type(exc).__name__}); try again later"
+        ) from exc
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "storage": str(settings.runtime_root)}
@@ -112,6 +140,41 @@ def refresh_portfolio(service: PortfolioService = Depends(portfolio_service)) ->
 @app.get("/api/prices/capabilities")
 def price_capabilities(service: PortfolioService = Depends(portfolio_service)) -> dict:
     return service.price_capabilities()
+
+
+@app.get("/api/market/strip")
+def market_strip(service: MarketService = Depends(market_service)) -> dict:
+    return service.market_strip()
+
+
+@app.get("/api/market/{symbol}/chart")
+def market_chart(
+    symbol: str,
+    period: str = Query(default="1Y", alias="range", max_length=4),
+    service: MarketService = Depends(market_service),
+) -> dict:
+    return _market_call(lambda: service.chart(symbol, period))
+
+
+@app.get("/api/market/{symbol}/technicals")
+def market_technicals(symbol: str, service: MarketService = Depends(market_service)) -> dict:
+    return _market_call(lambda: service.technicals(symbol))
+
+
+@app.get("/api/watchlist")
+def watchlist(service: MarketService = Depends(market_service)) -> dict:
+    return service.watchlist()
+
+
+@app.post("/api/watchlist", dependencies=[Depends(require_local_write)])
+def add_watchlist_symbol(request: WatchlistAdd, service: MarketService = Depends(market_service)) -> dict:
+    return {"status": "ok", "symbol": _market_call(lambda: service.add_to_watchlist(request.symbol))}
+
+
+@app.delete("/api/watchlist/{symbol}", dependencies=[Depends(require_local_write)])
+def remove_watchlist_symbol(symbol: str, service: MarketService = Depends(market_service)) -> dict:
+    _market_call(lambda: service.remove_from_watchlist(symbol))
+    return {"status": "deleted"}
 
 
 @app.get("/api/portfolio/status")

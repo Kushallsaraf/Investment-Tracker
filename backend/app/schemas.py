@@ -50,6 +50,10 @@ class ActivityCreate(BaseModel):
     note: str = Field(default="", max_length=2_000)
 
 
+class WatchlistAdd(BaseModel):
+    symbol: str = Field(min_length=1, max_length=12)
+
+
 class LoadDemoRequest(BaseModel):
     confirm: Literal["LOAD DEMO"]
 

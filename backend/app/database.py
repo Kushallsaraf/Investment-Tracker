@@ -266,6 +266,37 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         );
         """,
     ),
+    (
+        2,
+        """
+        CREATE TABLE IF NOT EXISTS market_symbols (
+            symbol TEXT PRIMARY KEY,
+            security_name TEXT NOT NULL,
+            asset_type TEXT NOT NULL CHECK (asset_type IN ('STOCK', 'ETF')),
+            exchange TEXT NOT NULL,
+            history_fetched_at TEXT,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS price_bars (
+            symbol TEXT NOT NULL REFERENCES market_symbols(symbol) ON DELETE CASCADE,
+            bar_date TEXT NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            adj_close REAL NOT NULL,
+            volume INTEGER,
+            PRIMARY KEY (symbol, bar_date)
+        );
+
+        CREATE TABLE IF NOT EXISTS watchlist (
+            symbol TEXT PRIMARY KEY REFERENCES market_symbols(symbol),
+            position INTEGER NOT NULL,
+            added_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

@@ -11,18 +11,21 @@ from app.main import (
     analytics_service,
     app,
     journal_service,
+    market_service,
     portfolio_service,
     research_service,
     sector_service,
 )
+from app.market_repository import MarketRepository
 from app.repository import PortfolioRepository
 from app.services.activities import ActivityService
 from app.services.analytics import AnalyticsService
 from app.services.journal import JournalService
+from app.services.market import MarketService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
 from app.services.sectors import SectorService
-from fakes import FakePrices
+from fakes import FakeHistory, FakePrices, listing, synthetic_bars
 from fastapi.testclient import TestClient
 
 WRITE = {"X-Portfolio-Manager": "local-ui"}
@@ -44,7 +47,17 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     app.dependency_overrides[research_service] = lambda: ResearchService(
         journal_repository, repository, sectors
     )
-    yield TestClient(app)
+    history = FakeHistory(
+        {
+            "ACME": {"meta": listing("Acme Corporation"), "bars": synthetic_bars(300)},
+            "SPY": {"meta": listing("SPDR S&P 500 ETF", instrument_type="ETF"), "bars": synthetic_bars(300)},
+        }
+    )
+    market = MarketService(MarketRepository(repository.database), provider=history)
+    app.dependency_overrides[market_service] = lambda: market
+    client = TestClient(app)
+    client.history = history  # type: ignore[attr-defined]
+    yield client
     app.dependency_overrides.clear()
 
 
@@ -157,3 +170,31 @@ def test_demo_portfolio_and_activity_ledger(client: TestClient) -> None:
     assert "# Manual review request: AAPL" in pack["markdown"]
     assert "CAD" not in pack["markdown"]
 
+
+
+def test_market_routes_return_chart_technicals_and_watchlist(client: TestClient) -> None:
+    chart = client.get("/api/market/acme/chart", params={"range": "3M"})
+    assert chart.status_code == 200
+    payload = chart.json()
+    assert payload["symbol"] == "ACME"
+    assert payload["range"] == "3M"
+    assert set(payload["indicators"]) >= {"ema20", "sma200", "rsi14", "macd_histogram"}
+    assert client.get("/api/market/ACME/chart", params={"range": "2W"}).status_code == 422
+    assert client.get("/api/market/XIC.TO/chart").status_code == 422
+    assert client.get("/api/market/NOPE/chart").status_code == 422
+
+    technicals = client.get("/api/market/ACME/technicals").json()
+    assert technicals["trend"]["label"] == "Uptrend"
+
+    assert client.post("/api/watchlist", json={"symbol": "ACME"}).status_code == 403
+    assert client.post("/api/watchlist", headers=WRITE, json={"symbol": "acme"}).json()["symbol"] == "ACME"
+    assert [item["symbol"] for item in client.get("/api/watchlist").json()["items"]] == ["ACME"]
+    assert client.delete("/api/watchlist/ACME", headers=WRITE).status_code == 200
+    assert client.delete("/api/watchlist/ACME", headers=WRITE).status_code == 404
+
+    client.history.offline = True  # type: ignore[attr-defined]
+    outage = client.get("/api/market/NEWCO/chart")
+    assert outage.status_code == 502
+    assert "Market data is unavailable" in outage.json()["detail"]
+    strip = client.get("/api/market/strip").json()
+    assert len(strip["items"]) == 10

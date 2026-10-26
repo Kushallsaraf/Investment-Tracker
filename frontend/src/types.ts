@@ -360,3 +360,90 @@ export type ReviewPack = {
   evidence_as_of: string | null;
   generated_at: string;
 };
+
+export type ChartRange = "1M" | "3M" | "6M" | "1Y" | "5Y" | "MAX";
+
+export type PriceBar = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  adj_close: number;
+  volume: number | null;
+};
+
+export type QuoteChange = {
+  last: number | null;
+  change: number | null;
+  change_pct: number | null;
+  as_of: string | null;
+};
+
+export type IndicatorName =
+  | "ema20"
+  | "ema50"
+  | "sma200"
+  | "bb_upper"
+  | "bb_middle"
+  | "bb_lower"
+  | "rsi14"
+  | "macd"
+  | "macd_signal"
+  | "macd_histogram";
+
+export type ChartPayload = {
+  symbol: string;
+  name: string;
+  asset_type: "STOCK" | "ETF";
+  exchange: string;
+  range: ChartRange;
+  bars: PriceBar[];
+  indicators: Record<IndicatorName, Array<number | null>>;
+  quote: QuoteChange;
+  source: string;
+  fetched_at: string | null;
+  stale: boolean;
+};
+
+export type Technicals = {
+  symbol: string;
+  as_of: string;
+  close: number;
+  trend: {
+    label: "Uptrend" | "Downtrend" | "Mixed" | null;
+    sma50: number | null;
+    sma200: number | null;
+    above_sma50: boolean | null;
+    above_sma200: boolean | null;
+    distance_sma50_pct: number | null;
+  };
+  rsi14: number | null;
+  rsi_zone: "overbought" | "oversold" | "neutral" | null;
+  macd: { value: number | null; signal: number | null; state: "bullish" | "bearish" | null };
+  range_52w: { high: number; low: number; position: number | null };
+  relative_strength_3m: {
+    benchmark: string;
+    symbol_return: number;
+    benchmark_return: number | null;
+    difference: number | null;
+  } | null;
+  atr14: number | null;
+  atr_pct: number | null;
+  atr_stop: number | null;
+  volume_ratio: number | null;
+  source: string;
+  stale: boolean;
+};
+
+export type StripItem = QuoteChange & { label: string; symbol: string; description: string };
+
+export type WatchlistItem = QuoteChange & {
+  symbol: string;
+  security_name: string;
+  asset_type: "STOCK" | "ETF";
+  exchange: string;
+  position: number;
+  added_at: string;
+  stale: boolean;
+};

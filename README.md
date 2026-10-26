@@ -41,9 +41,26 @@ missing and excluded from the total rather than estimated.
 
 ## Interface
 
-The fixed dark interface is organized into eight client-side tabs:
+The fixed dark interface has two top-level tabs.
 
-- **Dashboard** shows portfolio totals, data warnings, sector allocation, and the
+**Terminal** is a single-ticker research screen. Open any US stock or ETF from the
+ticker search (`⌘K`, `Ctrl K`, or `/`) or the watchlist.
+
+- A market strip shows SPY, QQQ, DIA, IWM, VIX, the 10-year yield, the dollar
+  index, oil, gold, and bitcoin from daily data.
+- The chart uses TradingView Lightweight Charts with candle/line views, 1M–MAX
+  ranges, EMA 20/50, SMA 200, and Bollinger overlays, volume, and an RSI or MACD
+  pane. Daily history is cached in SQLite and refreshed at most every 15 minutes.
+- Technical setup describes trend, RSI, MACD, 52-week range position, 3-month
+  strength against SPY, ATR, a 2× ATR stop level, and relative volume. Every
+  indicator is calculated in Python; nothing is a signal or forecast.
+- The AI analyst, strategy scanner, fundamentals, news and sentiment, insider
+  activity, peers, notes, and macro panels are placeholders until their data
+  sources are connected.
+
+**Portfolio** keeps the holdings workspace in eight sub-views:
+
+- **Overview** shows portfolio totals, data warnings, sector allocation, and the
   largest holdings. Unsupported return and income figures remain unavailable.
 - **Holdings** is an Excel-style worksheet with an add/update form, saved column
   preferences, editable stock sectors and decisions, and local row deletion.

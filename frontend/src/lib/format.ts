@@ -74,3 +74,23 @@ export function statusTone(holding: Holding): "positive" | "warning" | "negative
 export function decisionLabel(value: string | null | undefined): string {
   return value ? value.replaceAll("_", " ") : "WATCH";
 }
+
+export function price(value: number | null | undefined, digits = 2): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+}
+
+export function signedPercent(value: number | null | undefined, digits = 2): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const rendered = new Intl.NumberFormat("en-US", {
+    style: "percent",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+  return value > 0 ? `+${rendered}` : rendered;
+}
+
+export function compactNumber(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}

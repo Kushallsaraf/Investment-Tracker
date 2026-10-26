@@ -3,6 +3,8 @@ import type {
   ActivityPayload,
   AIReview,
   Analytics,
+  ChartPayload,
+  ChartRange,
   ClaudePrompt,
   DecisionName,
   HistoryPoint,
@@ -17,6 +19,9 @@ import type {
   ReviewPrivacy,
   SectorAnalysis,
   SectorName,
+  StripItem,
+  Technicals,
+  WatchlistItem,
 } from "./types";
 
 const WRITE_HEADERS = {
@@ -233,5 +238,38 @@ export async function importAIReview(review: Record<string, unknown>): Promise<v
     method: "POST",
     headers: WRITE_HEADERS,
     body: JSON.stringify(review),
+  }));
+}
+
+export async function getMarketStrip(): Promise<StripItem[]> {
+  const payload = await responseJson<{ items: StripItem[] }>(await fetch("/api/market/strip"));
+  return payload.items;
+}
+
+export async function getChart(symbol: string, range: ChartRange): Promise<ChartPayload> {
+  return responseJson<ChartPayload>(await fetch(`/api/market/${encodeURIComponent(symbol)}/chart?range=${range}`));
+}
+
+export async function getTechnicals(symbol: string): Promise<Technicals> {
+  return responseJson<Technicals>(await fetch(`/api/market/${encodeURIComponent(symbol)}/technicals`));
+}
+
+export async function getWatchlist(): Promise<WatchlistItem[]> {
+  const payload = await responseJson<{ items: WatchlistItem[] }>(await fetch("/api/watchlist"));
+  return payload.items;
+}
+
+export async function addToWatchlist(symbol: string): Promise<void> {
+  await responseJson(await fetch("/api/watchlist", {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify({ symbol }),
+  }));
+}
+
+export async function removeFromWatchlist(symbol: string): Promise<void> {
+  await responseJson(await fetch(`/api/watchlist/${encodeURIComponent(symbol)}`, {
+    method: "DELETE",
+    headers: WRITE_HEADERS,
   }));
 }

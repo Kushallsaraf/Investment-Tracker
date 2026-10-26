@@ -2,7 +2,7 @@ import { useState } from "react";
 import { decisionLabel, percent, signedUsd, statusLabel, statusTone, timestamp, usd } from "../lib/format";
 import type { Analytics, IncomePayload, JournalPayload, Portfolio, SectorAnalysis } from "../types";
 import { DataPanel, Donut, MissingDataWarning, SourceTimestamp, StatCell, ViewHeader } from "../components/ui";
-import type { MainTab } from "../components/AppShell";
+import type { PortfolioView } from "../components/AppShell";
 
 const SECTOR_PALETTE = ["#78a9dd", "#6cc6b0", "#b190dd", "#d5aa64", "#e08a8a", "#8fc4e8", "#a3c47a", "#d49ac4", "#c9b48a", "#7fb8a8", "#9aa4d6", "#c78f6b"];
 const FIXED_COLORS: Record<string, string> = { Cash: "#5e6874", Unknown: "#3a424c" };
@@ -51,7 +51,7 @@ export function DashboardPage({
   analytics: Analytics | null;
   journal: JournalPayload | null;
   income: IncomePayload | null;
-  onNavigate: (tab: MainTab) => void;
+  onNavigate: (view: PortfolioView) => void;
 }) {
   const [period, setPeriod] = useState("1Y");
   if (!portfolio) {

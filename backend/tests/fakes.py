@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 from app.providers.prices import UnsupportedSymbolError, normalize_symbol
@@ -46,3 +47,55 @@ class FakePrices:
             "delay_minutes": None,
             "stale": self.stale,
         }
+
+
+def synthetic_bars(count: int, *, base: float = 100.0, step: float = 0.5) -> list[dict[str, Any]]:
+    """Weekday bars rising by `step` each session, with a fixed 2-point high-low range."""
+    bars: list[dict[str, Any]] = []
+    day = date(2023, 1, 2)
+    while len(bars) < count:
+        if day.weekday() < 5:
+            close = base + step * len(bars)
+            bars.append(
+                {
+                    "date": day.isoformat(),
+                    "open": close - 0.2,
+                    "high": close + 1,
+                    "low": close - 1,
+                    "close": close,
+                    "adj_close": close,
+                    "volume": 1_000,
+                }
+            )
+        day += timedelta(days=1)
+    return bars
+
+
+def listing(name: str, *, currency: str = "USD", instrument_type: str = "EQUITY") -> dict[str, Any]:
+    return {
+        "currency": currency,
+        "instrument_type": instrument_type,
+        "name": name,
+        "exchange": "NYSE",
+        "market_price": None,
+        "market_time": None,
+    }
+
+
+class FakeHistory:
+    """Serve full history for the initial period and only recent bars for incremental refreshes."""
+
+    def __init__(self, series: dict[str, dict[str, Any]]) -> None:
+        self.series = series
+        self.calls: list[tuple[str, str]] = []
+        self.offline = False
+
+    def daily_bars(self, provider_symbol: str, period: str) -> dict[str, Any]:
+        self.calls.append((provider_symbol, period))
+        if self.offline:
+            raise RuntimeError("synthetic outage")
+        if provider_symbol not in self.series:
+            raise UnsupportedSymbolError(f"{provider_symbol} was not found")
+        payload = self.series[provider_symbol]
+        bars = payload["bars"] if period == "10y" else payload["bars"][-5:]
+        return {"meta": payload["meta"], "bars": bars}
