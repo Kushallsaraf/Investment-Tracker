@@ -74,16 +74,16 @@ class SectorService:
         allocation: defaultdict[str, Decimal] = defaultdict(Decimal)
         warnings: list[str] = []
         evidence: dict[str, dict[str, Any]] = {}
-        total = _decimal(portfolio["total_cad"]) or Decimal("0")
+        total = _decimal(portfolio["total_value"]) or Decimal("0")
         covered = Decimal("0")
         etf_value = Decimal("0")
         etf_covered = Decimal("0")
 
         for holding in portfolio["holdings"]:
-            value = _decimal(holding.get("market_value_cad"))
+            value = _decimal(holding.get("market_value"))
             if value is None:
                 warnings.append(
-                    f"{holding['canonical_symbol']}: no CAD market value, so it is excluded "
+                    f"{holding['canonical_symbol']}: no market value, so it is excluded "
                     "from sector allocation."
                 )
                 continue
@@ -176,7 +176,7 @@ class SectorService:
         categories = [
             {
                 "sector": sector,
-                "market_value_cad": _text(value),
+                "market_value": _text(value),
                 "portfolio_weight": _text(value / total) if total else "0",
             }
             for sector, value in sorted(allocation.items(), key=lambda item: item[1], reverse=True)
@@ -187,18 +187,14 @@ class SectorService:
                 "ETF weights use issuer-published aggregate sector allocations, normalized for "
                 "rounding; holdings can change after the stated as-of date."
             )
-        warnings.append(
-            "Issuer taxonomies can differ; Vanguard ICB labels are normalized to the common "
-            "labels shown here."
-        )
         return {
             "valuation_snapshot_id": portfolio["valuation_snapshot_id"],
             "calculated_at": datetime.now(UTC).isoformat(),
-            "total_cad": _text(total),
-            "covered_value_cad": _text(covered),
+            "total_value": _text(total),
+            "covered_value": _text(covered),
             "coverage_pct": _text(covered / total) if total else "0",
-            "etf_value_cad": _text(etf_value),
-            "etf_covered_value_cad": _text(etf_covered),
+            "etf_value": _text(etf_value),
+            "etf_covered_value": _text(etf_covered),
             "etf_coverage_pct": _text(etf_covered / etf_value) if etf_value else "1",
             "categories": categories,
             "evidence": list(evidence.values()),

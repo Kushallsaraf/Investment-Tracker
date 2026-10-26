@@ -11,17 +11,18 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import settings
 from app.database import Database
-from app.integrations.snaptrade import MacOSKeychainCredentialProvider, ReadOnlySnapTradeClient
 from app.journal_repository import JournalRepository
+from app.providers.prices import UnsupportedSymbolError
 from app.repository import PortfolioRepository
 from app.schemas import (
+    ActivityCreate,
     AIReviewCreate,
-    ApplySnapTradeSyncRequest,
     ClaudePromptUpsert,
     DecisionUpdate,
-    DeleteLocalBrokerageDataRequest,
-    DisconnectSnapTradeRequest,
+    DeletePortfolioDataRequest,
     InvestmentProfileUpdate,
+    LoadDemoRequest,
+    PositionUpsert,
     ReviewPackRequest,
     SectorUpdateRequest,
     TriggerCreate,
@@ -32,11 +33,6 @@ from app.services.journal import JournalService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
 from app.services.sectors import SectorService
-from app.services.snaptrade import (
-    SnapTradeSyncError,
-    SnapTradeSyncRateLimited,
-    SnapTradeSyncService,
-)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
@@ -51,7 +47,7 @@ def require_local_write(
 
 app = FastAPI(
     title="Investment Tracker",
-    version="0.3.0",
+    version="0.4.0",
     docs_url="/api/docs",
     redoc_url=None,
 )
@@ -69,16 +65,6 @@ _activity_service = ActivityService(_repository)
 _analytics_service = AnalyticsService(_repository, _sector_service)
 _journal_service = JournalService(_journal_repository, _repository)
 _research_service = ResearchService(_journal_repository, _repository, _sector_service)
-_snaptrade_service = SnapTradeSyncService(
-    _repository,
-    _portfolio_service,
-    ReadOnlySnapTradeClient(MacOSKeychainCredentialProvider()),
-    enabled=settings.snaptrade_enabled,
-    redirect_uri=settings.snaptrade_ui_redirect,
-    local_secret_path=settings.secret_path,
-    min_sync_seconds=settings.snaptrade_min_sync_seconds,
-)
-
 
 def portfolio_service() -> PortfolioService:
     return _portfolio_service
@@ -86,10 +72,6 @@ def portfolio_service() -> PortfolioService:
 
 def sector_service() -> SectorService:
     return _sector_service
-
-
-def snaptrade_service() -> SnapTradeSyncService:
-    return _snaptrade_service
 
 
 def activity_service() -> ActivityService:
@@ -132,97 +114,43 @@ def price_capabilities(service: PortfolioService = Depends(portfolio_service)) -
     return service.price_capabilities()
 
 
-@app.get("/api/snaptrade/status")
-def snaptrade_status(service: SnapTradeSyncService = Depends(snaptrade_service)) -> dict:
+@app.get("/api/portfolio/status")
+def portfolio_status(service: PortfolioService = Depends(portfolio_service)) -> dict:
     return service.status()
 
 
-@app.post("/api/snaptrade/connection/check", dependencies=[Depends(require_local_write)])
-def check_snaptrade_connection(
-    service: SnapTradeSyncService = Depends(snaptrade_service),
-) -> dict:
+@app.post("/api/portfolio/positions", dependencies=[Depends(require_local_write)])
+def upsert_portfolio_position(
+    request: PositionUpsert,
+    service: PortfolioService = Depends(portfolio_service),
+) -> dict[str, str]:
     try:
-        return service.check_connection()
-    except SnapTradeSyncError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.post("/api/snaptrade/portal", dependencies=[Depends(require_local_write)])
-def snaptrade_portal(service: SnapTradeSyncService = Depends(snaptrade_service)) -> dict[str, str]:
-    try:
-        return {"redirect_uri": service.create_portal()}
-    except SnapTradeSyncError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.post("/api/snaptrade/sync/preview", dependencies=[Depends(require_local_write)])
-def preview_snaptrade_sync(service: SnapTradeSyncService = Depends(snaptrade_service)) -> dict:
-    try:
-        return service.preview_sync()
-    except SnapTradeSyncRateLimited as exc:
+        return {"status": "ok", **service.upsert_position(**request.model_dump())}
+    except (UnsupportedSymbolError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
         raise HTTPException(
-            status_code=429,
-            detail=str(exc),
-            headers={"Retry-After": str(exc.retry_after)},
+            status_code=502, detail=f"Symbol lookup failed ({type(exc).__name__}); try again later"
         ) from exc
-    except SnapTradeSyncError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@app.get("/api/snaptrade/sync/pending")
-def pending_snaptrade_sync(service: SnapTradeSyncService = Depends(snaptrade_service)) -> dict:
-    return {"preview": service.pending_preview()}
-
-
-@app.post(
-    "/api/snaptrade/sync/{preview_id}/apply",
-    dependencies=[Depends(require_local_write)],
-)
-def apply_snaptrade_sync(
-    preview_id: str,
-    request: ApplySnapTradeSyncRequest,
-    service: SnapTradeSyncService = Depends(snaptrade_service),
+@app.post("/api/portfolio/demo", dependencies=[Depends(require_local_write)])
+def load_demo_portfolio(
+    request: LoadDemoRequest,
+    service: PortfolioService = Depends(portfolio_service),
 ) -> dict[str, str]:
     try:
-        return {"status": "ok", **service.apply_preview(preview_id)}
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (ValueError, SnapTradeSyncError) as exc:
+        return {"status": "ok", **service.load_demo()}
+    except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@app.delete(
-    "/api/snaptrade/sync/{preview_id}",
-    dependencies=[Depends(require_local_write)],
-)
-def cancel_snaptrade_sync(
-    preview_id: str,
-    service: SnapTradeSyncService = Depends(snaptrade_service),
-) -> dict[str, str]:
-    try:
-        service.cancel_preview(preview_id)
-        return {"status": "deleted"}
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@app.post("/api/snaptrade/disconnect", dependencies=[Depends(require_local_write)])
-def disconnect_snaptrade(
-    request: DisconnectSnapTradeRequest,
-    service: SnapTradeSyncService = Depends(snaptrade_service),
+@app.delete("/api/portfolio/local-data", dependencies=[Depends(require_local_write)])
+def delete_portfolio_data(
+    request: DeletePortfolioDataRequest,
+    service: PortfolioService = Depends(portfolio_service),
 ) -> dict[str, int | str]:
-    try:
-        return {"status": "disconnect_pending", "connections": service.disconnect()}
-    except SnapTradeSyncError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.delete("/api/snaptrade/local-data", dependencies=[Depends(require_local_write)])
-def delete_local_brokerage_data(
-    request: DeleteLocalBrokerageDataRequest,
-    service: SnapTradeSyncService = Depends(snaptrade_service),
-) -> dict[str, int | str]:
-    return {"status": "deleted", "snapshots": service.delete_local_data()}
+    return {"status": "deleted", "snapshots": service.delete_data()}
 
 
 @app.delete(
@@ -261,7 +189,7 @@ def portfolio_analytics(service: AnalyticsService = Depends(analytics_service)) 
 
 
 @app.get("/api/activity")
-def brokerage_activity(
+def activity_ledger(
     activity_type: str | None = Query(default=None, max_length=40),
     symbol: str | None = Query(default=None, max_length=40),
     start_date: str | None = Query(default=None, max_length=40),
@@ -279,6 +207,29 @@ def brokerage_activity(
         )}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/activity", dependencies=[Depends(require_local_write)])
+def record_activity(
+    request: ActivityCreate,
+    service: ActivityService = Depends(activity_service),
+) -> dict[str, str]:
+    try:
+        return {"status": "ok", "id": service.record(request.model_dump(mode="json"))}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/activity/{activity_id}", dependencies=[Depends(require_local_write)])
+def delete_activity(
+    activity_id: str,
+    service: ActivityService = Depends(activity_service),
+) -> dict[str, str]:
+    try:
+        service.delete(activity_id)
+        return {"status": "deleted"}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/income")

@@ -13,56 +13,47 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (
         1,
         """
-        CREATE TABLE IF NOT EXISTS accounts (
-            id TEXT PRIMARY KEY,
-            source_fingerprint TEXT NOT NULL UNIQUE,
-            alias TEXT NOT NULL UNIQUE,
-            account_type TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-
         CREATE TABLE IF NOT EXISTS instruments (
             id TEXT PRIMARY KEY,
             canonical_symbol TEXT NOT NULL UNIQUE,
             security_name TEXT NOT NULL,
-            asset_type TEXT NOT NULL CHECK (asset_type IN ('STOCK', 'ETF')),
+            asset_type TEXT NOT NULL CHECK (asset_type IN ('STOCK', 'ETF', 'CASH')),
             exchange TEXT NOT NULL,
-            trading_currency TEXT NOT NULL CHECK (trading_currency IN ('CAD', 'USD')),
+            manual_sector TEXT,
+            sector_source TEXT,
+            sector_source_url TEXT,
+            sector_as_of TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS holding_snapshots (
             id TEXT PRIMARY KEY,
-            imported_at TEXT NOT NULL,
-            source_type TEXT NOT NULL,
-            source_file_hash TEXT NOT NULL,
-            source_as_of TEXT,
+            created_at TEXT NOT NULL,
+            source_type TEXT NOT NULL CHECK (
+                source_type IN ('manual_edit', 'manual_row_removal', 'demo')
+            ),
+            data_origin TEXT NOT NULL CHECK (data_origin IN ('manual', 'demo')),
             position_count INTEGER NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_holding_snapshots_imported
-            ON holding_snapshots(imported_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_holding_snapshots_hash
-            ON holding_snapshots(source_file_hash);
+        CREATE INDEX IF NOT EXISTS idx_holding_snapshots_created
+            ON holding_snapshots(created_at DESC);
 
         CREATE TABLE IF NOT EXISTS positions (
             id TEXT PRIMARY KEY,
             snapshot_id TEXT NOT NULL REFERENCES holding_snapshots(id) ON DELETE CASCADE,
-            account_id TEXT NOT NULL REFERENCES accounts(id),
             instrument_id TEXT NOT NULL REFERENCES instruments(id),
-            source_row_number INTEGER NOT NULL,
+            account_name TEXT NOT NULL,
+            row_number INTEGER NOT NULL,
             quantity TEXT NOT NULL,
             average_cost TEXT,
-            imported_price TEXT,
-            imported_market_value TEXT,
-            UNIQUE(snapshot_id, account_id, instrument_id)
+            UNIQUE(snapshot_id, account_name, instrument_id)
         );
 
         CREATE TABLE IF NOT EXISTS price_quotes (
             id TEXT PRIMARY KEY,
             instrument_id TEXT NOT NULL REFERENCES instruments(id),
             price TEXT NOT NULL,
-            currency TEXT NOT NULL CHECK (currency IN ('CAD', 'USD')),
             observed_at TEXT NOT NULL,
             fetched_at TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -74,29 +65,14 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE INDEX IF NOT EXISTS idx_price_quotes_instrument_time
             ON price_quotes(instrument_id, fetched_at DESC);
 
-        CREATE TABLE IF NOT EXISTS fx_rates (
-            id TEXT PRIMARY KEY,
-            base_currency TEXT NOT NULL,
-            quote_currency TEXT NOT NULL,
-            rate TEXT NOT NULL,
-            observed_at TEXT NOT NULL,
-            fetched_at TEXT NOT NULL,
-            source TEXT NOT NULL,
-            source_url TEXT,
-            stale INTEGER NOT NULL CHECK (stale IN (0, 1))
-        );
-        CREATE INDEX IF NOT EXISTS idx_fx_rates_pair_time
-            ON fx_rates(base_currency, quote_currency, fetched_at DESC);
-
         CREATE TABLE IF NOT EXISTS valuation_snapshots (
             id TEXT PRIMARY KEY,
-            holding_snapshot_id TEXT NOT NULL REFERENCES holding_snapshots(id),
+            holding_snapshot_id TEXT NOT NULL REFERENCES holding_snapshots(id) ON DELETE CASCADE,
             created_at TEXT NOT NULL,
-            total_cad TEXT NOT NULL,
+            total_value TEXT NOT NULL,
             priced_positions INTEGER NOT NULL,
             total_positions INTEGER NOT NULL,
             position_coverage_pct TEXT NOT NULL,
-            fx_rate_id TEXT REFERENCES fx_rates(id),
             warnings_json TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_valuation_snapshots_created
@@ -105,160 +81,37 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE TABLE IF NOT EXISTS position_valuations (
             id TEXT PRIMARY KEY,
             valuation_snapshot_id TEXT NOT NULL REFERENCES valuation_snapshots(id) ON DELETE CASCADE,
-            position_id TEXT NOT NULL REFERENCES positions(id),
+            position_id TEXT NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
             price_quote_id TEXT REFERENCES price_quotes(id),
-            market_value_trading TEXT,
-            market_value_cad TEXT,
-            unrealized_gain_loss_trading TEXT,
-            unrealized_gain_loss_cad TEXT,
+            market_value TEXT,
+            unrealized_gain_loss TEXT,
             portfolio_weight TEXT,
             data_status TEXT NOT NULL,
             UNIQUE(valuation_snapshot_id, position_id)
         );
 
-        CREATE TABLE IF NOT EXISTS import_drafts (
+        CREATE TABLE IF NOT EXISTS activities (
             id TEXT PRIMARY KEY,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            source_file_hash TEXT NOT NULL,
-            rows_json TEXT NOT NULL,
-            issues_json TEXT NOT NULL,
-            ignored_columns_json TEXT NOT NULL
-        );
-        """,
-    ),
-    (
-        2,
-        """
-        PRAGMA foreign_keys = OFF;
-        BEGIN IMMEDIATE;
-
-        CREATE TABLE instruments_v2 (
-            id TEXT PRIMARY KEY,
-            canonical_symbol TEXT NOT NULL UNIQUE,
-            security_name TEXT NOT NULL,
-            asset_type TEXT NOT NULL CHECK (asset_type IN ('STOCK', 'ETF', 'CASH')),
-            exchange TEXT NOT NULL,
-            trading_currency TEXT NOT NULL CHECK (trading_currency IN ('CAD', 'USD')),
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        INSERT INTO instruments_v2
-            (id, canonical_symbol, security_name, asset_type, exchange,
-             trading_currency, created_at, updated_at)
-        SELECT id, canonical_symbol, security_name, asset_type, exchange,
-               trading_currency, created_at, updated_at
-        FROM instruments;
-
-        DROP TABLE instruments;
-        ALTER TABLE instruments_v2 RENAME TO instruments;
-
-        COMMIT;
-        PRAGMA foreign_keys = ON;
-        """,
-    ),
-    (
-        3,
-        """
-        ALTER TABLE instruments ADD COLUMN manual_sector TEXT;
-        ALTER TABLE instruments ADD COLUMN sector_source TEXT;
-        ALTER TABLE instruments ADD COLUMN sector_source_url TEXT;
-        ALTER TABLE instruments ADD COLUMN sector_as_of TEXT;
-        """,
-    ),
-    (
-        4,
-        """
-        CREATE TABLE IF NOT EXISTS snaptrade_sync_state (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            connection_status TEXT NOT NULL,
-            connection_permission TEXT,
-            brokerage_name TEXT,
-            connection_fingerprint TEXT,
-            last_checked_at TEXT,
-            last_attempted_sync_at TEXT,
-            last_successful_sync_at TEXT,
-            holdings_as_of TEXT,
-            warning TEXT,
-            updated_at TEXT NOT NULL
-        );
-
-        INSERT OR IGNORE INTO snaptrade_sync_state
-            (id, connection_status, updated_at)
-        VALUES (1, 'not_checked', CURRENT_TIMESTAMP);
-
-        CREATE TABLE IF NOT EXISTS snaptrade_sync_previews (
-            id TEXT PRIMARY KEY,
-            created_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            holdings_as_of TEXT,
-            last_successful_sync_at TEXT,
-            rows_json TEXT NOT NULL,
-            changes_json TEXT NOT NULL,
-            issues_json TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_snaptrade_sync_previews_expires
-            ON snaptrade_sync_previews(expires_at);
-        """,
-    ),
-    (
-        5,
-        """
-        ALTER TABLE snaptrade_sync_previews
-            ADD COLUMN activities_json TEXT NOT NULL DEFAULT '[]';
-        ALTER TABLE snaptrade_sync_previews
-            ADD COLUMN activity_summary_json TEXT NOT NULL DEFAULT '{}';
-
-        CREATE TABLE IF NOT EXISTS brokerage_activities (
-            activity_key TEXT PRIMARY KEY,
-            account_fingerprint TEXT NOT NULL,
-            normalized_type TEXT NOT NULL CHECK (
-                normalized_type IN (
-                    'BUY', 'SELL', 'DISTRIBUTION', 'DEPOSIT', 'WITHDRAWAL',
-                    'FEE', 'INTEREST', 'WITHHOLDING_TAX', 'TRANSFER', 'OTHER'
+            activity_type TEXT NOT NULL CHECK (
+                activity_type IN (
+                    'BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL',
+                    'FEE', 'INTEREST', 'WITHHOLDING_TAX', 'OTHER'
                 )
             ),
             symbol TEXT,
-            trade_date TEXT,
-            settlement_date TEXT,
+            trade_date TEXT NOT NULL,
             quantity TEXT,
             price TEXT,
-            currency TEXT,
             fee TEXT,
             cash_amount TEXT,
-            source TEXT NOT NULL,
-            source_as_of TEXT,
-            record_hash TEXT NOT NULL,
-            first_seen_at TEXT NOT NULL,
-            last_seen_at TEXT NOT NULL,
-            holding_snapshot_id TEXT
+            note TEXT NOT NULL DEFAULT '',
+            data_origin TEXT NOT NULL CHECK (data_origin IN ('manual', 'demo')),
+            created_at TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_brokerage_activities_date
-            ON brokerage_activities(trade_date DESC);
-        CREATE INDEX IF NOT EXISTS idx_brokerage_activities_symbol
-            ON brokerage_activities(symbol, trade_date DESC);
-
-        CREATE TABLE IF NOT EXISTS brokerage_activity_revisions (
-            id TEXT PRIMARY KEY,
-            activity_key TEXT NOT NULL,
-            record_hash TEXT NOT NULL,
-            normalized_json TEXT NOT NULL,
-            observed_at TEXT NOT NULL,
-            holding_snapshot_id TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_brokerage_activity_revisions_key
-            ON brokerage_activity_revisions(activity_key, observed_at DESC);
-
-        CREATE TABLE IF NOT EXISTS activity_coverage (
-            account_fingerprint TEXT PRIMARY KEY,
-            coverage_start TEXT,
-            coverage_end TEXT,
-            complete_initial_sync INTEGER NOT NULL CHECK (complete_initial_sync IN (0, 1)),
-            source_as_of TEXT,
-            last_synced_at TEXT NOT NULL,
-            warning TEXT
-        );
+        CREATE INDEX IF NOT EXISTS idx_activities_date
+            ON activities(trade_date DESC);
+        CREATE INDEX IF NOT EXISTS idx_activities_symbol
+            ON activities(symbol, trade_date DESC);
 
         CREATE TABLE IF NOT EXISTS investment_profiles (
             instrument_id TEXT PRIMARY KEY,
@@ -401,7 +254,6 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             instrument_id TEXT NOT NULL,
             observation_date TEXT NOT NULL,
             value TEXT NOT NULL,
-            currency TEXT NOT NULL,
             series_type TEXT NOT NULL CHECK (
                 series_type IN ('ADJUSTED_TOTAL_RETURN', 'RAW_CLOSE')
             ),
@@ -412,82 +264,6 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             fetched_at TEXT NOT NULL,
             UNIQUE(instrument_id, observation_date, series_type, source)
         );
-
-        CREATE TABLE IF NOT EXISTS etf_evidence_profiles (
-            id TEXT PRIMARY KEY,
-            instrument_id TEXT,
-            symbol TEXT NOT NULL,
-            issuer TEXT NOT NULL,
-            source_url TEXT NOT NULL,
-            evidence_type TEXT NOT NULL,
-            data_as_of TEXT NOT NULL,
-            verified_on TEXT NOT NULL,
-            method TEXT NOT NULL,
-            coverage_pct TEXT NOT NULL,
-            mer_pct TEXT,
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_etf_evidence_symbol_date
-            ON etf_evidence_profiles(symbol, data_as_of DESC, verified_on DESC);
-
-        CREATE TABLE IF NOT EXISTS etf_evidence_holdings (
-            id TEXT PRIMARY KEY,
-            evidence_id TEXT NOT NULL REFERENCES etf_evidence_profiles(id) ON DELETE CASCADE,
-            holding_key TEXT NOT NULL,
-            holding_name TEXT NOT NULL,
-            weight TEXT NOT NULL,
-            sector TEXT,
-            country TEXT,
-            economic_currency TEXT,
-            UNIQUE(evidence_id, holding_key)
-        );
-        """,
-    ),
-    (
-        6,
-        """
-        ALTER TABLE holding_snapshots ADD COLUMN data_origin TEXT CHECK (
-            data_origin IN ('legacy', 'snaptrade') OR data_origin IS NULL
-        );
-
-        UPDATE holding_snapshots
-        SET data_origin = CASE
-            WHEN source_type = 'snaptrade_read_sync' THEN 'snaptrade'
-            WHEN source_type != 'manual_row_removal' THEN 'legacy'
-            ELSE NULL
-        END;
-
-        UPDATE holding_snapshots
-        SET data_origin = (
-            SELECT CASE
-                WHEN parent.source_type = 'snaptrade_read_sync' THEN 'snaptrade'
-                ELSE 'legacy'
-            END
-            FROM holding_snapshots AS parent
-            WHERE parent.imported_at < holding_snapshots.imported_at
-              AND parent.source_type != 'manual_row_removal'
-            ORDER BY parent.imported_at DESC
-            LIMIT 1
-        )
-        WHERE source_type = 'manual_row_removal';
-        """,
-    ),
-    (
-        7,
-        """
-        -- Repair installations where migration 5 was recorded before the
-        -- activity-revisions table was added to that migration's source.
-        CREATE TABLE IF NOT EXISTS brokerage_activity_revisions (
-            id TEXT PRIMARY KEY,
-            activity_key TEXT NOT NULL,
-            record_hash TEXT NOT NULL,
-            normalized_json TEXT NOT NULL,
-            observed_at TEXT NOT NULL,
-            holding_snapshot_id TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_brokerage_activity_revisions_key
-            ON brokerage_activity_revisions(activity_key, observed_at DESC);
         """,
     ),
 )

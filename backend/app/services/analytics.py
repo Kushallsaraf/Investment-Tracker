@@ -12,7 +12,7 @@ from typing import Any
 from app.repository import PortfolioRepository
 from app.services.sectors import SectorService
 
-CANADIAN_BENCHMARK = "S&P/TSX Composite Total Return Index"
+BENCHMARK = "S&P 500 Total Return Index"
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -142,71 +142,10 @@ class AnalyticsService:
                 else Decimal("0"),
                 "f",
             ),
-            "missing_data_basis": "share of positions without a CAD valuation",
+            "missing_data_basis": "share of positions without a market valuation",
             "as_of": portfolio["created_at"],
             "source": "Latest immutable local valuation snapshot",
         }
-
-    def _economic_exposure(self, portfolio: dict[str, Any] | None) -> dict[str, Any]:
-        if portfolio is None:
-            return {"status": "missing", "categories": [], "coverage_pct": "0"}
-        total = _decimal(portfolio["total_cad"]) or Decimal("0")
-        cash = sum(
-            (
-                _decimal(row.get("market_value_cad")) or Decimal("0")
-                for row in portfolio["holdings"]
-                if row["asset_type"] == "CASH"
-            ),
-            Decimal("0"),
-        )
-        unknown = max(Decimal("0"), total - cash)
-        categories = []
-        if cash:
-            categories.append(
-                {
-                    "name": "Cash",
-                    "weight": format(cash / total, "f") if total else "0",
-                    "market_value_cad": format(cash, "f"),
-                }
-            )
-        if unknown:
-            categories.append(
-                {
-                    "name": "Unknown",
-                    "weight": format(unknown / total, "f") if total else "0",
-                    "market_value_cad": format(unknown, "f"),
-                }
-            )
-        return {
-            "status": "partial" if total else "missing",
-            "categories": categories,
-            "coverage_pct": format(cash / total, "f") if total else "0",
-            "etf_lookthrough_available": False,
-            "as_of": portfolio["created_at"],
-            "source": "Local cash classification only",
-            "warning": (
-                "Economic exposure is unavailable for securities and ETFs. Trading currency "
-                "has not been substituted. Only cash is classified."
-            ),
-        }
-
-    def _trading_currency(self, portfolio: dict[str, Any] | None) -> list[dict[str, str]]:
-        if portfolio is None:
-            return []
-        total = _decimal(portfolio["total_cad"]) or Decimal("0")
-        buckets: dict[str, Decimal] = {}
-        for row in portfolio["holdings"]:
-            value = _decimal(row.get("market_value_cad"))
-            if value is not None:
-                currency = str(row["trading_currency"])
-                buckets[currency] = buckets.get(currency, Decimal("0")) + value
-        return [
-            {
-                "currency": currency,
-                "weight": format(value / total, "f") if total else "0",
-            }
-            for currency, value in sorted(buckets.items())
-        ]
 
     def overview(self) -> dict[str, Any]:
         portfolio = self.repository.latest_portfolio()
@@ -222,18 +161,16 @@ class AnalyticsService:
         return {
             "generated_at": generated_at,
             "concentration": self._concentration(portfolio),
-            "economic_exposure": self._economic_exposure(portfolio),
-            "trading_currency": self._trading_currency(portfolio),
             "performance": {
                 "status": "insufficient_transaction_history",
                 "label": "INSUFFICIENT TRANSACTION HISTORY",
                 "reason": adjusted_missing,
-                "benchmark": CANADIAN_BENCHMARK,
+                "benchmark": BENCHMARK,
                 "portfolio_return": None,
                 "benchmark_return": None,
                 "difference": None,
                 "periods": [],
-                "currency": "CAD",
+                "currency": "USD",
                 "distributions_included": None,
                 "source": None,
                 "as_of": None,
@@ -243,7 +180,7 @@ class AnalyticsService:
                 "status": "missing",
                 "label": "NOT AVAILABLE",
                 "reason": risk_missing,
-                "benchmark": CANADIAN_BENCHMARK,
+                "benchmark": BENCHMARK,
                 "measurement_period": None,
                 "observation_frequency": None,
                 "annualized_volatility": None,
@@ -254,19 +191,6 @@ class AnalyticsService:
                 "as_of": None,
                 "coverage_pct": "0",
                 "disclaimer": "Historical risk · not a forecast",
-            },
-            "currency_exposure": {
-                "status": "missing",
-                "label": "NOT AVAILABLE",
-                "reason": (
-                    "Underlying economic currency exposure is not available from verified issuer "
-                    "or company evidence. Listing currency is shown separately and is not substituted."
-                ),
-                "categories": [{"currency": "Unknown", "weight": "1"}] if portfolio else [],
-                "trading_currency": self._trading_currency(portfolio),
-                "coverage_pct": "0",
-                "source": None,
-                "as_of": None,
             },
             "etf_lookthrough": {
                 "status": "partial" if (sector_analysis or {}).get("evidence") else "missing",

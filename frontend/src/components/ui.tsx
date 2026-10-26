@@ -117,7 +117,7 @@ export function Meter({ label, value }: { label: string; value: number }) {
         <span>{label}</span>
         <div className="meter" aria-hidden="true"><i style={{ width: `${safe * 100}%` }} /></div>
       </div>
-      <strong>{new Intl.NumberFormat("en-CA", { style: "percent", maximumFractionDigits: 1 }).format(safe)}</strong>
+      <strong>{new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 }).format(safe)}</strong>
     </div>
   );
 }

@@ -94,7 +94,7 @@ export function ResearchPage({
               <label><input type="checkbox" checked={privacy.weights_only} onChange={(event) => onPrivacy({ ...privacy, weights_only: event.target.checked })} />Weights-only mode</label>
               <label><input type="checkbox" checked={!privacy.include_quantities} disabled={privacy.weights_only} onChange={(event) => onPrivacy({ ...privacy, include_quantities: !event.target.checked })} />Exclude quantities</label>
               <label><input type="checkbox" checked={!privacy.include_dollar_values} disabled={privacy.weights_only} onChange={(event) => onPrivacy({ ...privacy, include_dollar_values: !event.target.checked })} />Exclude dollar values</label>
-              <label><input type="checkbox" checked={!privacy.include_account_type} onChange={(event) => onPrivacy({ ...privacy, include_account_type: !event.target.checked })} />Exclude account type</label>
+              <label><input type="checkbox" checked={!privacy.include_account_name} onChange={(event) => onPrivacy({ ...privacy, include_account_name: !event.target.checked })} />Exclude account name</label>
             </fieldset>
             <button className="action" type="button" disabled={!instrumentId || !promptId || busy} onClick={() => onPack(instrumentId, promptId, activeTrigger?.id ?? null, false)}>PREVIEW EXACT MARKDOWN</button>
           </div>

@@ -1,86 +1,9 @@
-export type SnapTradeStatus = {
-  adapter_enabled: boolean;
-  connection_status: string;
-  connection_permission: string | null;
-  brokerage_name: string;
-  last_checked_at: string | null;
-  last_attempted_sync_at: string | null;
-  last_successful_sync_at: string | null;
-  holdings_as_of: string | null;
-  next_sync_allowed_at: string | null;
-  sync_allowed: boolean;
-  stale: boolean;
-  warnings: string[];
-};
+export type DataOrigin = "manual" | "demo";
 
-export type SnapTradeSyncIssue = {
-  severity: "error" | "warning";
-  code: string;
-  message: string;
-  symbol: string | null;
-};
-
-export type SnapTradeIncomingPosition = {
-  row_number: number;
-  canonical_symbol: string;
-  security_name: string;
-  asset_type: "STOCK" | "ETF" | "CASH";
-  exchange: string;
-  trading_currency: "CAD" | "USD";
-  quantity: string;
-  average_cost: string | null;
-  account_alias: string;
-  account_type: string;
-};
-
-export type SnapTradeChange = {
-  symbol: string;
-  account_type: string;
-  before: string | null;
-  after: string | null;
-};
-
-export type ActivityPreviewSummary = {
-  additions: number;
-  changed_records: number;
-  date_range: { start: string | null; end: string | null };
-  type_counts: Record<string, number>;
-  missing_symbols: string[];
-  unsupported_activity_types: string[];
-  coverage_start: string | null;
-  coverage_end: string | null;
-  incomplete_initial_sync: boolean;
-  warning: string | null;
-  accounts: Array<{
-    account_alias: string;
-    coverage_start: string | null;
-    coverage_end: string | null;
-    complete_initial_sync: boolean;
-    source_as_of: string | null;
-    warning: string | null;
-  }>;
-};
-
-export type SnapTradeSyncPreview = {
-  preview_id: string;
-  created_at: string;
-  expires_at: string;
-  holdings_as_of: string | null;
-  last_successful_sync_at: string | null;
-  positions: SnapTradeIncomingPosition[];
-  changes: {
-    additions: SnapTradeChange[];
-    removals: SnapTradeChange[];
-    quantity_changes: SnapTradeChange[];
-    cost_basis_changes: SnapTradeChange[];
-    cash_changes: SnapTradeChange[];
-  };
-  issues: SnapTradeSyncIssue[];
-  activity_preview: BrokerageActivity[];
-  activity_summary: ActivityPreviewSummary;
-  error_count: number;
-  warning_count: number;
-  can_apply: boolean;
+export type PortfolioStatus = {
+  data_origin: DataOrigin | null;
+  snapshot_count: number;
+  latest_snapshot_at: string | null;
 };
 
 export type PriceCapabilities = {
@@ -117,17 +40,12 @@ export type Holding = {
   security_name: string;
   asset_type: "STOCK" | "ETF" | "CASH";
   exchange: string;
-  trading_currency: "CAD" | "USD";
-  account_alias: string;
-  account_type: string;
+  account_name: string;
   quantity: string;
   average_cost: string | null;
   price: string | null;
-  price_currency: string | null;
-  market_value_trading: string | null;
-  market_value_cad: string | null;
-  unrealized_gain_loss_trading: string | null;
-  unrealized_gain_loss_cad: string | null;
+  market_value: string | null;
+  unrealized_gain_loss: string | null;
   portfolio_weight: string | null;
   price_timestamp: string | null;
   price_fetched_at: string | null;
@@ -147,34 +65,26 @@ export type Portfolio = {
   valuation_snapshot_id: string;
   holding_snapshot_id: string;
   created_at: string;
-  imported_at: string;
-  source_as_of: string | null;
-  total_cad: string;
+  snapshot_created_at: string;
+  data_origin: DataOrigin;
+  total_value: string;
   priced_positions: number;
   total_positions: number;
   position_coverage_pct: string;
   warnings: string[];
-  fx: {
-    rate: string;
-    observed_at: string;
-    fetched_at?: string;
-    source: string;
-    source_url?: string;
-    stale: number;
-  } | null;
   holdings: Holding[];
 };
 
 export type HistoryPoint = {
   id: string;
   created_at: string;
-  total_cad: string;
+  total_value: string;
   position_coverage_pct: string;
 };
 
 export type SectorCategory = {
   sector: string;
-  market_value_cad: string;
+  market_value: string;
   portfolio_weight: string;
 };
 
@@ -192,11 +102,11 @@ export type SectorEvidence = {
 export type SectorAnalysis = {
   valuation_snapshot_id: string;
   calculated_at: string;
-  total_cad: string;
-  covered_value_cad: string;
+  total_value: string;
+  covered_value: string;
   coverage_pct: string;
-  etf_value_cad: string;
-  etf_covered_value_cad: string;
+  etf_value: string;
+  etf_covered_value: string;
   etf_coverage_pct: string;
   categories: SectorCategory[];
   evidence: SectorEvidence[];
@@ -217,12 +127,6 @@ export type AvailabilityMetric = {
 export type Analytics = {
   generated_at: string;
   concentration: AvailabilityMetric;
-  economic_exposure: AvailabilityMetric & {
-    categories: Array<{ name: string; weight: string; market_value_cad: string }>;
-    etf_lookthrough_available?: boolean;
-    warning?: string;
-  };
-  trading_currency: Array<{ currency: string; weight: string }>;
   performance: AvailabilityMetric & {
     benchmark: string;
     portfolio_return: string | null;
@@ -240,10 +144,6 @@ export type Analytics = {
     measurement_period: string | null;
     observation_frequency: string | null;
     disclaimer: string;
-  };
-  currency_exposure: AvailabilityMetric & {
-    categories: Array<{ currency: string; weight: string }>;
-    trading_currency: Array<{ currency: string; weight: string }>;
   };
   etf_lookthrough: {
     status: string;
@@ -264,32 +164,46 @@ export type Analytics = {
   };
 };
 
-export type BrokerageActivity = {
-  id?: string;
-  normalized_type: string;
+export type ActivityType =
+  | "BUY"
+  | "SELL"
+  | "DIVIDEND"
+  | "DEPOSIT"
+  | "WITHDRAWAL"
+  | "FEE"
+  | "INTEREST"
+  | "WITHHOLDING_TAX"
+  | "OTHER";
+
+export type Activity = {
+  id: string;
+  activity_type: ActivityType;
   symbol: string | null;
-  trade_date: string | null;
-  settlement_date: string | null;
+  trade_date: string;
   quantity: string | null;
   price: string | null;
-  currency: string | null;
   fee: string | null;
   cash_amount: string | null;
-  source?: string;
-  source_as_of: string | null;
+  note: string;
+  data_origin: DataOrigin;
+  created_at: string;
+};
+
+export type ActivityInput = {
+  activity_type: ActivityType;
+  trade_date: string;
+  symbol?: string | null;
+  quantity?: string | null;
+  price?: string | null;
+  fee?: string | null;
+  cash_amount?: string | null;
+  note?: string;
 };
 
 export type ActivityPayload = {
-  activities: BrokerageActivity[];
-  coverage: {
-    start: string | null;
-    end: string | null;
-    complete: boolean;
-    source_as_of: string | null;
-    last_synced_at: string | null;
-  };
+  activities: Activity[];
+  coverage: { start: string | null; end: string | null; count: number };
   warnings: string[];
-  freshness: string;
   source: string;
 };
 
@@ -297,15 +211,21 @@ export type IncomePayload = {
   period_start: string;
   period_end: string;
   source: string;
-  source_as_of: string | null;
-  received_by_currency: Record<string, string>;
-  withholding_tax_by_currency: Record<string, string>;
-  income_by_holding: Array<{ symbol: string; amounts: Record<string, string> }>;
+  received: string;
+  withholding_tax: string;
+  income_by_holding: Array<{ symbol: string; amount: string }>;
   forward_annual_estimate: null;
   portfolio_yield: null;
   upcoming_distributions: [];
   coverage: ActivityPayload["coverage"];
   warnings: string[];
+};
+
+export type PositionInput = {
+  symbol: string;
+  quantity: string;
+  average_cost: string | null;
+  account_name: string;
 };
 
 export type InvestmentProfile = {
@@ -425,7 +345,7 @@ export type ReviewPrivacy = {
   weights_only: boolean;
   include_quantities: boolean;
   include_dollar_values: boolean;
-  include_account_type: boolean;
+  include_account_name: boolean;
 };
 
 export type ReviewPack = {

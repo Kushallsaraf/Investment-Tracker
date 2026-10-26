@@ -1,6 +1,6 @@
 import type { PropsWithChildren } from "react";
 import { timestamp } from "../lib/format";
-import type { SnapTradeStatus } from "../types";
+import type { DataOrigin } from "../types";
 
 export const MAIN_TABS = [
   "Dashboard",
@@ -15,39 +15,25 @@ export const MAIN_TABS = [
 
 export type MainTab = (typeof MAIN_TABS)[number];
 
-export function connectionLabel(status: SnapTradeStatus | null): string {
-  if (!status) return "SNAPTRADE · CHECKING";
-  const labels: Record<string, string> = {
-    adapter_disabled: "SNAPTRADE · DISABLED",
-    not_checked: "SNAPTRADE · NOT CHECKED",
-    credentials_missing: "SNAPTRADE · KEYCHAIN REQUIRED",
-    not_connected: "SNAPTRADE · NOT CONNECTED",
-    connected_read_only: "SNAPTRADE · READ ONLY",
-    disabled_connection: "SNAPTRADE · CONNECTION DISABLED",
-    rejected_trade_enabled: "SNAPTRADE · REJECTED",
-    disconnect_pending: "SNAPTRADE · DISCONNECTING",
-  };
-  return labels[status.connection_status]
-    ?? `SNAPTRADE · ${status.connection_status.replaceAll("_", " ").toUpperCase()}`;
+export function originLabel(origin: DataOrigin | null | undefined): string {
+  if (origin === "demo") return "DEMO DATA · SYNTHETIC";
+  if (origin === "manual") return "MANUAL PORTFOLIO";
+  return "NO PORTFOLIO";
 }
 
 export function AppShell({
   activeTab,
   onTab,
   holdingsAsOf,
-  snaptradeStatus,
+  dataOrigin,
   children,
 }: PropsWithChildren<{
   activeTab: MainTab;
   onTab: (tab: MainTab) => void;
   holdingsAsOf: string | null;
-  snaptradeStatus: SnapTradeStatus | null;
+  dataOrigin: DataOrigin | null;
 }>) {
-  const connectionTone = snaptradeStatus?.connection_status === "connected_read_only"
-    ? "positive"
-    : snaptradeStatus?.connection_status === "rejected_trade_enabled"
-      ? "negative"
-      : "warning";
+  const originTone = dataOrigin === "manual" ? "positive" : "warning";
   return (
     <div className="app-shell">
       <header className="global-header">
@@ -56,12 +42,12 @@ export function AppShell({
             <span className="brand-mark">IT</span>
             <div>
               <h1>Investment Tracker</h1>
-              <p>Canadian portfolio · CAD reporting</p>
+              <p>US portfolio · USD reporting</p>
             </div>
           </div>
           <div className="header-meta">
             <span>Holdings as of {timestamp(holdingsAsOf)}</span>
-            <strong className={connectionTone}>{connectionLabel(snaptradeStatus)}</strong>
+            <strong className={originTone}>{originLabel(dataOrigin)}</strong>
           </div>
         </div>
         <nav aria-label="Investment Tracker sections">

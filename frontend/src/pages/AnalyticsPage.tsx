@@ -93,30 +93,19 @@ function Performance({ analytics }: { analytics: Analytics }) {
 
 function Risk({ analytics }: { analytics: Analytics }) {
   const risk = analytics.risk;
-  const currency = analytics.currency_exposure;
   return (
-    <div className="analytics-grid">
-      <DataPanel title="Historical risk" meta="NOT A FORECAST">
-        {risk.status === "available" ? (
-          <div className="metric-list">
-            <Metric label="Annualized volatility" value={percent(risk.annualized_volatility)} />
-            <Metric label="Maximum drawdown" value={percent(risk.maximum_drawdown)} tone="negative" />
-            <Metric label={`Beta vs. ${risk.benchmark}`} value={risk.beta ?? "NOT AVAILABLE"} />
-            <Metric label="Correlation" value={risk.correlation ?? "NOT AVAILABLE"} />
-          </div>
-        ) : <MissingDataWarning title={risk.label} reason={risk.reason ?? "Aligned adjusted history is unavailable."} />}
-        <p className="evidence-disclaimer">{risk.disclaimer || "Historical risk · not a forecast"}</p>
-        <SourceTimestamp source={risk.source} asOf={risk.as_of} coverage={percent(risk.coverage_pct)} status={`${risk.measurement_period ?? "NO PERIOD"} · ${risk.observation_frequency ?? "NO FREQUENCY"}`} />
-      </DataPanel>
-      <DataPanel title="Currency exposure" meta="ECONOMIC EXPOSURE">
-        {currency.status === "available" ? <div className="panel-body">{currency.categories.map((row) => <Meter key={row.currency} label={row.currency} value={Number(row.weight)} />)}</div> : <MissingDataWarning title={currency.label} reason={currency.reason ?? "Economic currency evidence is unavailable."} />}
-        <div className="separate-evidence">
-          <strong>TRADING CURRENCY · SHOWN SEPARATELY</strong>
-          {currency.trading_currency.map((row) => <span key={row.currency}>{row.currency} {percent(row.weight)}</span>)}
+    <DataPanel title="Historical risk" meta="NOT A FORECAST">
+      {risk.status === "available" ? (
+        <div className="metric-list">
+          <Metric label="Annualized volatility" value={percent(risk.annualized_volatility)} />
+          <Metric label="Maximum drawdown" value={percent(risk.maximum_drawdown)} tone="negative" />
+          <Metric label={`Beta vs. ${risk.benchmark}`} value={risk.beta ?? "NOT AVAILABLE"} />
+          <Metric label="Correlation" value={risk.correlation ?? "NOT AVAILABLE"} />
         </div>
-        <SourceTimestamp source={currency.source} asOf={currency.as_of} coverage={percent(currency.coverage_pct)} status="UNKNOWN REMAINS VISIBLE" />
-      </DataPanel>
-    </div>
+      ) : <MissingDataWarning title={risk.label} reason={risk.reason ?? "Aligned adjusted history is unavailable."} />}
+      <p className="evidence-disclaimer">{risk.disclaimer || "Historical risk · not a forecast"}</p>
+      <SourceTimestamp source={risk.source} asOf={risk.as_of} coverage={percent(risk.coverage_pct)} status={`${risk.measurement_period ?? "NO PERIOD"} · ${risk.observation_frequency ?? "NO FREQUENCY"}`} />
+    </DataPanel>
   );
 }
 

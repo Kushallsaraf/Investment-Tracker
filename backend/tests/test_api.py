@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
+import pytest
 from app.database import Database
 from app.journal_repository import JournalRepository
 from app.main import (
@@ -14,368 +14,146 @@ from app.main import (
     portfolio_service,
     research_service,
     sector_service,
-    snaptrade_service,
 )
 from app.repository import PortfolioRepository
 from app.services.activities import ActivityService
 from app.services.analytics import AnalyticsService
-from app.services.imports import ImportService
 from app.services.journal import JournalService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
 from app.services.sectors import SectorService
-from app.services.snaptrade import SnapTradeSyncService
+from fakes import FakePrices
 from fastapi.testclient import TestClient
 
-CONNECTION_ID = "11111111-1111-4111-8111-111111111111"
-ACCOUNT_ID = "22222222-2222-4222-8222-222222222222"
-AS_OF = "2026-09-10T14:30:00+00:00"
-FIXED_NOW = datetime(2026, 9, 10, 15, 0, tzinfo=UTC)
+WRITE = {"X-Portfolio-Manager": "local-ui"}
+DEMO_SYMBOLS = ("AAPL", "MSFT", "NVDA", "JPM", "JNJ", "XOM", "VOO", "QQQ")
 
 
-class OnePrice:
-    source = "Synthetic quote"
-    supports_automatic_refresh = False
-    automatic_refresh_seconds = None
-
-    def quote(self, instrument: dict[str, Any]) -> dict[str, Any]:
-        now = FIXED_NOW.isoformat()
-        return {
-            "price": "41.25" if instrument["asset_type"] != "CASH" else "1",
-            "currency": instrument["trading_currency"],
-            "observed_at": now,
-            "fetched_at": now,
-            "source": self.source,
-            "source_url": None,
-            "quote_status": "end_of_day",
-            "delay_minutes": None,
-            "stale": False,
-        }
-
-
-class UnusedFx:
-    def usd_cad(self) -> dict[str, Any]:
-        raise AssertionError("FX should not be requested for a CAD-only portfolio")
-
-
-class SyntheticSnapTrade:
-    def __init__(self) -> None:
-        self.disconnected: list[str] = []
-
-    def create_connection_portal(self, redirect_uri: str) -> str:
-        assert redirect_uri.startswith("http://127.0.0.1:")
-        return "https://app.snaptrade.com/synthetic-read-only-portal"
-
-    def list_connections(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": CONNECTION_ID,
-                "type": "read",
-                "disabled": False,
-                "brokerage": {"slug": "WEALTHSIMPLE", "display_name": "Wealthsimple"},
-            }
-        ]
-
-    def list_accounts(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": ACCOUNT_ID,
-                "brokerage_authorization": CONNECTION_ID,
-                "number": "SENSITIVE-ACCOUNT-NUMBER",
-                "name": "Self-directed TFSA",
-                "raw_type": "TFSA",
-                "sync_status": {
-                    "holdings": {
-                        "last_successful_sync": AS_OF,
-                        "holdings_unavailable": False,
-                    },
-                    "activities": {"last_successful_sync": AS_OF},
-                },
-            }
-        ]
-
-    def list_positions(self, account_id: str) -> dict[str, Any]:
-        assert account_id == ACCOUNT_ID
-        return {
-            "data_freshness": {"as_of": AS_OF},
-            "results": [
-                {
-                    "instrument": {
-                        "kind": "stock",
-                        "symbol": "XIC",
-                        "description": "iShares Core S&P/TSX Capped Composite Index ETF",
-                        "currency": "CAD",
-                        "exchange": "XTSE",
-                    },
-                    "units": "10",
-                    "cost_basis": "31",
-                    "currency": "CAD",
-                    "as_of": AS_OF,
-                }
-            ],
-        }
-
-    def list_balances(self, account_id: str) -> list[dict[str, Any]]:
-        assert account_id == ACCOUNT_ID
-        return [{"currency": {"code": "CAD"}, "cash": "25"}]
-
-    def list_activities(
-        self,
-        account_id: str,
-        *,
-        start_date: str | None = None,
-        end_date: str | None = None,
-        offset: int = 0,
-        limit: int = 1_000,
-    ) -> dict[str, Any]:
-        assert account_id == ACCOUNT_ID
-        assert start_date is None and end_date is None
-        assert offset == 0 and limit == 1_000
-        return {
-            "data": [
-                {
-                    "id": "SENSITIVE-EXTERNAL-ACTIVITY-ID",
-                    "type": "DIVIDEND",
-                    "symbol": {
-                        "symbol": "XIC",
-                        "exchange": {"suffix": ".TO"},
-                    },
-                    "trade_date": "2026-06-30T00:00:00Z",
-                    "settlement_date": "2026-07-02T00:00:00Z",
-                    "units": None,
-                    "price": None,
-                    "fee": "0",
-                    "amount": "7.44",
-                    "currency": {"code": "CAD"},
-                }
-            ],
-            "pagination": {"offset": 0, "limit": 1_000, "total": 1},
-        }
-
-    def disconnect(self, connection_id: str) -> None:
-        self.disconnected.append(connection_id)
-
-
-def _client(
-    tmp_path: Path,
-) -> tuple[TestClient, PortfolioRepository, PortfolioService, SyntheticSnapTrade]:
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
     repository = PortfolioRepository(Database(tmp_path / "api.sqlite3"))
-    portfolio = PortfolioService(repository, price_provider=OnePrice(), fx_provider=UnusedFx())
-    synthetic = SyntheticSnapTrade()
+    prices = FakePrices({"ACME": "120", "SYNE": "50", **{symbol: "100" for symbol in DEMO_SYMBOLS}})
+    portfolio = PortfolioService(repository, price_provider=prices)
     sectors = SectorService(repository)
     journal_repository = JournalRepository(repository.database)
-    snaptrade = SnapTradeSyncService(
-        repository,
-        portfolio,
-        synthetic,
-        enabled=True,
-        redirect_uri="http://127.0.0.1:5173/?snaptrade=connected",
-        local_secret_path=tmp_path / "alias-secret.key",
-        clock=lambda: FIXED_NOW,
-    )
     app.dependency_overrides[portfolio_service] = lambda: portfolio
     app.dependency_overrides[sector_service] = lambda: sectors
-    app.dependency_overrides[snaptrade_service] = lambda: snaptrade
     app.dependency_overrides[activity_service] = lambda: ActivityService(repository)
     app.dependency_overrides[analytics_service] = lambda: AnalyticsService(repository, sectors)
-    app.dependency_overrides[journal_service] = lambda: JournalService(
-        journal_repository, repository
-    )
+    app.dependency_overrides[journal_service] = lambda: JournalService(journal_repository, repository)
     app.dependency_overrides[research_service] = lambda: ResearchService(
         journal_repository, repository, sectors
     )
-    return TestClient(app), repository, portfolio, synthetic
-
-
-def _create_legacy_snapshot(
-    tmp_path: Path,
-    repository: PortfolioRepository,
-    portfolio: PortfolioService,
-) -> str:
-    source = tmp_path / "legacy.csv"
-    source.write_text(
-        "Account Type,Account Number,Symbol,Security Name,Security Type,"
-        "Exchange,Currency,Quantity,Average Cost\n"
-        "TFSA,LEGACY-SYNTHETIC,XIC,iShares Core ETF,ETF,TSX,CAD,9,30\n",
-        encoding="utf-8",
-    )
-    imports = ImportService(repository)
-    preview = imports.preview(source)
-    snapshot_id = imports.confirm(preview["draft_id"], accept_warnings=True)
-    portfolio.refresh(snapshot_id)
-    return snapshot_id
-
-
-def test_write_endpoints_require_local_marker_and_csv_routes_are_inactive(tmp_path: Path) -> None:
-    client, _, _, _ = _client(tmp_path)
-    assert client.post("/api/snaptrade/sync/preview").status_code == 403
-    legacy_route = client.post(
-        "/api/imports/preview",
-        headers={"X-Portfolio-Manager": "local-ui"},
-    )
-    assert legacy_route.status_code in {404, 405}
+    yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+def test_write_endpoints_require_local_marker(client: TestClient) -> None:
+    body = {"symbol": "ACME", "quantity": "1"}
+    assert client.post("/api/portfolio/positions", json=body).status_code == 403
+    assert client.post("/api/portfolio/demo", json={"confirm": "LOAD DEMO"}).status_code == 403
+    assert client.post("/api/activity", json={}).status_code == 403
+    assert not [route.path for route in app.routes if "snaptrade" in route.path or "import" in route.path]
 
 
 def test_default_services_share_one_repository() -> None:
-    assert snaptrade_service().repository is portfolio_service().repository
     assert sector_service().repository is portfolio_service().repository
+    assert activity_service().repository is portfolio_service().repository
 
 
-def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -> None:
-    client, repository, portfolio, synthetic = _client(tmp_path)
-    legacy_snapshot_id = _create_legacy_snapshot(tmp_path, repository, portfolio)
+def test_manual_portfolio_workflow(client: TestClient) -> None:
+    assert client.get("/api/portfolio").json() == {"status": "empty", "portfolio": None}
 
-    portal = client.post(
-        "/api/snaptrade/portal", headers={"X-Portfolio-Manager": "local-ui"}
+    added = client.post(
+        "/api/portfolio/positions",
+        headers=WRITE,
+        json={"symbol": "acme", "quantity": "3", "average_cost": "100", "account_name": "Brokerage"},
     )
-    assert portal.status_code == 200
-    assert portal.json()["redirect_uri"].startswith("https://app.snaptrade.com/")
+    assert added.status_code == 200
+    assert added.json()["symbol"] == "ACME"
+    client.post("/api/portfolio/positions", headers=WRITE, json={"symbol": "CASH", "quantity": "40"})
 
-    connection_check = client.post(
-        "/api/snaptrade/connection/check",
-        headers={"X-Portfolio-Manager": "local-ui"},
+    foreign = client.post(
+        "/api/portfolio/positions", headers=WRITE, json={"symbol": "XIC.TO", "quantity": "1"}
     )
-    assert connection_check.status_code == 200
-    assert connection_check.json()["connection_status"] == "connected_read_only"
-    repeated_portal = client.post(
-        "/api/snaptrade/portal", headers={"X-Portfolio-Manager": "local-ui"}
+    assert foreign.status_code == 422
+    assert "not a supported US ticker" in foreign.json()["detail"]
+    invalid = client.post(
+        "/api/portfolio/positions", headers=WRITE, json={"symbol": "ACME", "quantity": "-1"}
     )
-    assert repeated_portal.status_code == 409
-    assert "already connected" in repeated_portal.json()["detail"]
+    assert invalid.status_code == 422
 
-    preview_response = client.post(
-        "/api/snaptrade/sync/preview", headers={"X-Portfolio-Manager": "local-ui"}
-    )
-    assert preview_response.status_code == 200
-    preview = preview_response.json()
-    assert len(preview["changes"]["quantity_changes"]) == 1
-    assert len(preview["changes"]["cost_basis_changes"]) == 1
-    assert len(preview["changes"]["cash_changes"]) == 1
-    assert preview["can_apply"] is True
-    assert preview["activity_summary"]["additions"] == 1
-    assert preview["activity_summary"]["type_counts"] == {"DISTRIBUTION": 1}
-    assert preview["activity_summary"]["incomplete_initial_sync"] is False
-    xic = next(row for row in preview["positions"] if row["canonical_symbol"] == "XIC.TO")
-    assert xic["asset_type"] == "ETF"
-    assert any(
-        issue["code"] == "BROKERAGE_ASSET_TYPE_CONFLICT"
-        for issue in preview["issues"]
-    )
-    assert ACCOUNT_ID not in preview_response.text
-    assert "SENSITIVE-ACCOUNT-NUMBER" not in preview_response.text
-    assert "SENSITIVE-EXTERNAL-ACTIVITY-ID" not in preview_response.text
+    portfolio = client.get("/api/portfolio").json()["portfolio"]
+    assert portfolio["total_value"] == "400"
+    assert portfolio["data_origin"] == "manual"
+    assert {row["canonical_symbol"] for row in portfolio["holdings"]} == {"ACME", "USD"}
+    assert client.get("/api/portfolio/status").json()["snapshot_count"] == 2
 
-    recovered_preview = client.get("/api/snaptrade/sync/pending")
-    assert recovered_preview.status_code == 200
-    assert recovered_preview.json()["preview"]["preview_id"] == preview["preview_id"]
-    assert ACCOUNT_ID not in recovered_preview.text
-    assert "SENSITIVE-ACCOUNT-NUMBER" not in recovered_preview.text
+    demo_refused = client.post("/api/portfolio/demo", headers=WRITE, json={"confirm": "LOAD DEMO"})
+    assert demo_refused.status_code == 409
 
-    bad_confirmation = client.post(
-        f"/api/snaptrade/sync/{preview['preview_id']}/apply",
-        headers={"X-Portfolio-Manager": "local-ui"},
-        json={"confirm": "yes"},
-    )
-    assert bad_confirmation.status_code == 422
-    applied = client.post(
-        f"/api/snaptrade/sync/{preview['preview_id']}/apply",
-        headers={"X-Portfolio-Manager": "local-ui"},
-        json={"confirm": "APPLY"},
-    )
-    assert applied.status_code == 200
-    assert client.get("/api/snaptrade/sync/pending").json()["preview"] is None
-    dashboard = client.get("/api/portfolio").json()["portfolio"]
-    assert dashboard["total_cad"] == "437.50"
-    assert {row["canonical_symbol"] for row in dashboard["holdings"]} == {
-        "XIC.TO",
-        "CASH-CAD",
-    }
-    assert dashboard["holdings"][0]["price_source"] in {"Synthetic quote", "Currency face value"}
-    assert len(client.get("/api/portfolio/history").json()["history"]) == 2
-    activities = client.get("/api/activity").json()
-    assert activities["activities"][0]["normalized_type"] == "DISTRIBUTION"
-    assert activities["activities"][0]["symbol"] == "XIC.TO"
-
-    xic_position = next(
-        row["position_id"] for row in dashboard["holdings"] if row["canonical_symbol"] == "XIC.TO"
-    )
-    local_removal = client.delete(
-        f"/api/portfolio/positions/{xic_position}",
-        headers={"X-Portfolio-Manager": "local-ui"},
-    )
-    assert local_removal.status_code == 200
-    assert len(client.get("/api/portfolio/history").json()["history"]) == 3
-    with repository.database.connect() as connection:
-        derived = connection.execute(
-            "SELECT data_origin FROM holding_snapshots WHERE source_type = 'manual_row_removal'"
-        ).fetchone()
-    assert derived["data_origin"] == "snaptrade"
-
-    second_preview = client.post(
-        "/api/snaptrade/sync/preview", headers={"X-Portfolio-Manager": "local-ui"}
-    )
-    assert second_preview.status_code == 429
-    assert int(second_preview.headers["retry-after"]) >= 1
-
-    rejected_disconnect = client.post(
-        "/api/snaptrade/disconnect",
-        headers={"X-Portfolio-Manager": "local-ui"},
-        json={"confirm": "yes"},
-    )
-    assert rejected_disconnect.status_code == 422
-    assert synthetic.disconnected == []
-
-    disconnect = client.post(
-        "/api/snaptrade/disconnect",
-        headers={"X-Portfolio-Manager": "local-ui"},
-        json={"confirm": "DISCONNECT"},
-    )
-    assert disconnect.status_code == 200
-    assert synthetic.disconnected == [CONNECTION_ID]
-
-    pending_check = client.post(
-        "/api/snaptrade/connection/check",
-        headers={"X-Portfolio-Manager": "local-ui"},
-    )
-    assert pending_check.status_code == 200
-    assert pending_check.json()["connection_status"] == "disconnect_pending"
-    reconnect_too_soon = client.post(
-        "/api/snaptrade/portal", headers={"X-Portfolio-Manager": "local-ui"}
-    )
-    assert reconnect_too_soon.status_code == 409
-    assert "still processing" in reconnect_too_soon.json()["detail"]
-
-    rejected_deletion = client.request(
-        "DELETE",
-        "/api/snaptrade/local-data",
-        headers={"X-Portfolio-Manager": "local-ui"},
-        json={"confirm": "DELETE"},
-    )
-    assert rejected_deletion.status_code == 422
+    acme = next(row for row in portfolio["holdings"] if row["canonical_symbol"] == "ACME")
+    removed = client.delete(f"/api/portfolio/positions/{acme['position_id']}", headers=WRITE)
+    assert removed.status_code == 200
+    assert removed.json()["removed_symbol"] == "ACME"
     assert len(client.get("/api/portfolio/history").json()["history"]) == 3
 
+    analytics = client.get("/api/analytics").json()["analytics"]
+    assert analytics["performance"]["benchmark"] == "S&P 500 Total Return Index"
+    assert "currency_exposure" not in analytics
+
+    rejected = client.request(
+        "DELETE", "/api/portfolio/local-data", headers=WRITE, json={"confirm": "DELETE"}
+    )
+    assert rejected.status_code == 422
     deleted = client.request(
-        "DELETE",
-        "/api/snaptrade/local-data",
-        headers={"X-Portfolio-Manager": "local-ui"},
-        json={"confirm": "DELETE LOCAL DATA"},
+        "DELETE", "/api/portfolio/local-data", headers=WRITE, json={"confirm": "DELETE LOCAL DATA"}
     )
-    assert deleted.status_code == 200
-    assert deleted.json()["snapshots"] == 2
-    restored = client.get("/api/portfolio").json()["portfolio"]
-    assert restored["holding_snapshot_id"] == legacy_snapshot_id
-    assert restored["total_cad"] == "371.25"
-    with repository.database.connect() as connection:
-        preserved_symbols = {
-            row["canonical_symbol"]
-            for row in connection.execute("SELECT canonical_symbol FROM instruments")
-        }
-    assert "CASH-CAD" in preserved_symbols
+    assert deleted.json() == {"status": "deleted", "snapshots": 3}
+    assert client.get("/api/portfolio").json()["portfolio"] is None
 
-    raw_database = repository.database.path.read_bytes().decode("latin-1", errors="ignore")
-    assert ACCOUNT_ID not in raw_database
-    assert CONNECTION_ID not in raw_database
-    assert "SENSITIVE-ACCOUNT-NUMBER" not in raw_database
-    assert "SENSITIVE-EXTERNAL-ACTIVITY-ID" not in raw_database
-    app.dependency_overrides.clear()
+
+def test_demo_portfolio_and_activity_ledger(client: TestClient) -> None:
+    loaded = client.post("/api/portfolio/demo", headers=WRITE, json={"confirm": "LOAD DEMO"})
+    assert loaded.status_code == 200
+    portfolio = client.get("/api/portfolio").json()["portfolio"]
+    assert portfolio["data_origin"] == "demo"
+    assert portfolio["total_positions"] == 9
+    assert client.get("/api/portfolio/status").json()["data_origin"] == "demo"
+
+    activity = client.get("/api/activity", params={"activity_type": "DIVIDEND"}).json()
+    assert activity["activities"]
+    assert all(row["data_origin"] == "demo" for row in activity["activities"])
+    assert float(client.get("/api/income").json()["income"]["received"]) > 0
+
+    created = client.post(
+        "/api/activity",
+        headers=WRITE,
+        json={"activity_type": "DEPOSIT", "trade_date": "2026-09-01", "cash_amount": "500"},
+    )
+    assert created.status_code == 200
+    unsupported = client.post(
+        "/api/activity",
+        headers=WRITE,
+        json={"activity_type": "DISTRIBUTION", "trade_date": "2026-09-01", "cash_amount": "1"},
+    )
+    assert unsupported.status_code == 422
+    missing_symbol = client.post(
+        "/api/activity",
+        headers=WRITE,
+        json={"activity_type": "BUY", "trade_date": "2026-09-01", "quantity": "1"},
+    )
+    assert missing_symbol.status_code == 422
+    assert client.delete(f"/api/activity/{created.json()['id']}", headers=WRITE).status_code == 200
+    assert client.delete(f"/api/activity/{created.json()['id']}", headers=WRITE).status_code == 404
+
+    apple = next(row for row in portfolio["holdings"] if row["canonical_symbol"] == "AAPL")
+    prompts = client.get("/api/research/prompts").json()["prompts"]
+    assert "US retail investor" in prompts[0]["prompt_text"]
+    pack = client.post(
+        "/api/research/packs/preview",
+        json={"instrument_id": apple["instrument_id"], "prompt_id": prompts[0]["id"]},
+    ).json()["pack"]
+    assert "# Manual review request: AAPL" in pack["markdown"]
+    assert "CAD" not in pack["markdown"]
+

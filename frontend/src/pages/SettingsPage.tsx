@@ -1,7 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-import { cad, percent, timestamp } from "../lib/format";
-import type { ClaudePrompt, HistoryPoint, PriceCapabilities, ReviewPrivacy, SnapTradeStatus } from "../types";
-import { connectionLabel } from "../components/AppShell";
+import { percent, timestamp, usd } from "../lib/format";
+import type { ClaudePrompt, HistoryPoint, PortfolioStatus, PriceCapabilities, ReviewPrivacy } from "../types";
+import { originLabel } from "../components/AppShell";
 import { DataPanel, SourceTimestamp, ViewHeader } from "../components/ui";
 
 export function SettingsPage({
@@ -11,29 +11,21 @@ export function SettingsPage({
   privacy,
   prompts,
   busy,
-  previewOpen,
   onPrivacy,
-  onConnect,
-  onCheck,
-  onSync,
   onRefresh,
-  onDisconnect,
+  onLoadDemo,
   onDeleteData,
   onSavePrompt,
 }: {
-  status: SnapTradeStatus | null;
+  status: PortfolioStatus | null;
   priceCapabilities: PriceCapabilities | null;
   history: HistoryPoint[];
   privacy: ReviewPrivacy;
   prompts: ClaudePrompt[];
   busy: boolean;
-  previewOpen: boolean;
   onPrivacy: (privacy: ReviewPrivacy) => void;
-  onConnect: () => void;
-  onCheck: () => void;
-  onSync: () => void;
   onRefresh: () => void;
-  onDisconnect: () => void;
+  onLoadDemo: () => void;
   onDeleteData: () => void;
   onSavePrompt: (prompt: { id?: string; name: string; prompt_text: string }) => void;
 }) {
@@ -41,9 +33,7 @@ export function SettingsPage({
   const [promptName, setPromptName] = useState("");
   const [promptText, setPromptText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
-  const connected = status?.connection_status === "connected_read_only";
-  const canConnect = Boolean(status?.adapter_enabled && ["not_checked", "not_connected"].includes(status.connection_status));
-  const canDisconnect = Boolean(status?.adapter_enabled && ["connected_read_only", "disabled_connection", "rejected_trade_enabled", "disconnect_pending"].includes(status.connection_status));
+  const hasManualData = status?.data_origin === "manual";
 
   useEffect(() => {
     const selected = prompts.find((prompt) => prompt.id === promptId) ?? prompts[0];
@@ -68,32 +58,24 @@ export function SettingsPage({
 
   return (
     <>
-      <ViewHeader title="Settings and data" subtitle="Local-first configuration, synchronization status and explicit privacy controls" asOf={status?.last_checked_at} />
+      <ViewHeader title="Settings and data" subtitle="Local-first configuration, portfolio data source and explicit privacy controls" asOf={status?.latest_snapshot_at} />
       <div className="settings-grid">
-        <DataPanel title="Brokerage connection" meta={connectionLabel(status).replace("SNAPTRADE · ", "")}>
+        <DataPanel title="Portfolio data" meta={originLabel(status?.data_origin)}>
           <div className="settings-lines">
-            <SettingLine label="Provider" value="SnapTrade / Wealthsimple"><button className="action" type="button" disabled={!status?.adapter_enabled || busy} onClick={onCheck}>CHECK STATUS</button></SettingLine>
-            <SettingLine label="Last holdings sync" value={timestamp(status?.last_successful_sync_at)}><button className="action" type="button" disabled={!connected || !status?.sync_allowed || busy || previewOpen} onClick={onSync}>SYNC</button></SettingLine>
-            <SettingLine label="Holdings as of" value={timestamp(status?.holdings_as_of)}><span>{status?.stale ? "STALE" : "LATEST REPORTED"}</span></SettingLine>
-            <SettingLine label="Last connection check" value={timestamp(status?.last_checked_at)}><span>{status?.connection_permission === "read" ? "READ ONLY" : "NO READ PERMISSION"}</span></SettingLine>
-            <SettingLine label="Next sync eligible" value={status?.sync_allowed ? "AVAILABLE NOW" : timestamp(status?.next_sync_allowed_at)}><span>10 MINIMUM</span></SettingLine>
-            <SettingLine label="Market prices" value={`${priceCapabilities?.provider ?? "NOT AVAILABLE"} · separate from holdings`}><button className="action" type="button" disabled={busy} onClick={onRefresh}>REFRESH</button></SettingLine>
+            <SettingLine label="Data source" value={status?.data_origin === "demo" ? "Synthetic demo portfolio" : status?.data_origin === "manual" ? "Positions entered manually" : "No holdings yet"}><span>NO BROKERAGE CONNECTION</span></SettingLine>
+            <SettingLine label="Latest holdings snapshot" value={timestamp(status?.latest_snapshot_at)}><span>{status?.snapshot_count ?? 0} SNAPSHOTS</span></SettingLine>
+            <SettingLine label="Demo portfolio" value="Illustrative US stocks, ETFs, cash and activities"><button className="action" type="button" disabled={busy || hasManualData} onClick={onLoadDemo}>LOAD DEMO</button></SettingLine>
+            <SettingLine label="Market prices" value={`${priceCapabilities?.provider ?? "NOT AVAILABLE"} · separate from holdings`}><button className="action" type="button" disabled={busy || !status?.snapshot_count} onClick={onRefresh}>REFRESH</button></SettingLine>
           </div>
-          {status?.warnings.map((warning) => <div className="panel-warning" key={warning}>{warning}</div>)}
-          {!status?.adapter_enabled && <div className="panel-warning">The adapter is disabled by default. Credentials cannot be entered here; real Personal API keys remain in macOS Keychain.</div>}
-          <div className="connection-actions">
-            <span>Wealthsimple credentials and MFA are entered only in SnapTrade’s hosted portal.</span>
-            {!connected && <button className="action primary" type="button" disabled={!canConnect || busy} onClick={onConnect}>CONNECT</button>}
-            <button className="action danger" type="button" disabled={!canDisconnect || busy} onClick={onDisconnect}>DISCONNECT</button>
-          </div>
-          <SourceTimestamp source="SnapTrade Personal API Key · account data only" asOf={status?.holdings_as_of} status={status?.connection_permission === "read" ? "READ ONLY" : "NO ACTIVE READ CONNECTION"} />
+          {hasManualData && <div className="panel-warning">The demo portfolio is unavailable while manual holdings exist, so your data is never overwritten. Delete local portfolio data first to load it.</div>}
+          <SourceTimestamp source="Local SQLite snapshots" asOf={status?.latest_snapshot_at} status="NO EXTERNAL ACCOUNT ACCESS" />
         </DataPanel>
         <DataPanel title="Claude review privacy" meta="LOCAL DEFAULTS">
           <div className="privacy-options">
             <label><input type="checkbox" checked={privacy.weights_only} onChange={(event) => onPrivacy({ ...privacy, weights_only: event.target.checked })} />Use weights-only mode</label>
             <label><input type="checkbox" checked={!privacy.include_quantities} disabled={privacy.weights_only} onChange={(event) => onPrivacy({ ...privacy, include_quantities: !event.target.checked })} />Exclude quantities</label>
             <label><input type="checkbox" checked={!privacy.include_dollar_values} disabled={privacy.weights_only} onChange={(event) => onPrivacy({ ...privacy, include_dollar_values: !event.target.checked })} />Exclude dollar values</label>
-            <label><input type="checkbox" checked={privacy.include_account_type} onChange={(event) => onPrivacy({ ...privacy, include_account_type: event.target.checked })} />Include account type</label>
+            <label><input type="checkbox" checked={privacy.include_account_name} onChange={(event) => onPrivacy({ ...privacy, include_account_name: event.target.checked })} />Include account name</label>
             <label><input type="checkbox" checked readOnly />Preview exact pack before export</label>
           </div>
           <p className="panel-note">No Claude API integration. Review packs leave the application only when you manually copy or export them.</p>
@@ -110,21 +92,20 @@ export function SettingsPage({
         </DataPanel>
         <DataPanel title="Data controls" meta="CONFIRMATIONS REQUIRED">
           <div className="settings-lines">
-            <SettingLine label="Reporting currency" value="CAD"><span>FIXED</span></SettingLine>
+            <SettingLine label="Reporting currency" value="USD"><span>US LISTINGS ONLY</span></SettingLine>
             <SettingLine label="Historical snapshots" value={`${history.length} immutable valuation snapshot${history.length === 1 ? "" : "s"}`}><button className="action" type="button" onClick={() => setShowHistory((shown) => !shown)}>{showHistory ? "HIDE HISTORY" : "VIEW HISTORY"}</button></SettingLine>
-            <SettingLine label="Runtime storage" value="~/.canadian-portfolio-manager/"><span>OUTSIDE GIT</span></SettingLine>
-            <SettingLine label="Disconnect" value="Stops future synchronization; preserves local snapshots"><button className="action danger" type="button" disabled={!canDisconnect || busy} onClick={onDisconnect}>DISCONNECT</button></SettingLine>
-            <SettingLine label="Local brokerage data" value="Deletes SnapTrade-derived snapshots and normalized activities; preserves legacy snapshots"><button className="action danger" type="button" disabled={busy} onClick={onDeleteData}>DELETE LOCAL DATA</button></SettingLine>
+            <SettingLine label="Runtime storage" value="~/.portfolio-manager/"><span>OUTSIDE GIT</span></SettingLine>
+            <SettingLine label="Local portfolio data" value="Deletes holdings, valuations, quotes and activities; keeps decisions and AI reviews"><button className="action danger" type="button" disabled={busy} onClick={onDeleteData}>DELETE LOCAL DATA</button></SettingLine>
           </div>
           {showHistory && (
             <div className="table-wrap">
               <table className="data-table">
                 <thead><tr><th>Snapshot timestamp</th><th className="numeric">Market value</th><th className="numeric">Price coverage</th></tr></thead>
-                <tbody>{history.length ? history.map((row) => <tr key={row.id}><td>{timestamp(row.created_at)}</td><td className="numeric">{cad(row.total_cad)}</td><td className="numeric">{percent(row.position_coverage_pct)}</td></tr>) : <tr><td colSpan={3} className="unavailable-cell">NO HISTORICAL VALUATION SNAPSHOTS</td></tr>}</tbody>
+                <tbody>{history.length ? history.map((row) => <tr key={row.id}><td>{timestamp(row.created_at)}</td><td className="numeric">{usd(row.total_value)}</td><td className="numeric">{percent(row.position_coverage_pct)}</td></tr>) : <tr><td colSpan={3} className="unavailable-cell">NO HISTORICAL VALUATION SNAPSHOTS</td></tr>}</tbody>
               </table>
             </div>
           )}
-          <p className="panel-note">No raw portfolio upload, account number, name, address, brokerage credential, consumer key or client ID is stored in SQLite.</p>
+          <p className="panel-note">No account number, name, address or brokerage credential is collected or stored.</p>
         </DataPanel>
       </div>
     </>

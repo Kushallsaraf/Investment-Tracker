@@ -10,15 +10,15 @@ from app.repository import PortfolioRepository
 from app.services.journal import CLAUDE_SUGGESTIONS, DISPOSITIONS
 from app.services.sectors import SectorService
 
-DEFAULT_PROMPT_NAME = "Beginner Canadian investment review"
-DEFAULT_PROMPT = """Act as a careful research assistant for a beginner Canadian retail investor.
+DEFAULT_PROMPT_NAME = "Beginner US investment review"
+DEFAULT_PROMPT = """Act as a careful research assistant for a beginner US retail investor.
 Assess the evidence without placing a trade or predicting future returns. Separate verified facts,
-interpretation, and missing information. Cite primary sources with exact as-of dates. For Canadian
-ETFs, prefer current ETF Facts, prospectuses, and issuer-published holdings. Use adjusted total-return
-data including distributions for performance comparisons. Explain the bull case, bear case, material
-risks, what evidence is missing, and which conditions would change the conclusion. End with a
-non-binding suggestion from the allowed choices and a short human-review checklist. This is research,
-not financial advice."""
+interpretation, and missing information. Cite primary sources with exact as-of dates. Prefer SEC
+filings (10-K, 10-Q, 8-K) for companies and current prospectuses and issuer-published holdings for
+ETFs. Use adjusted total-return data including dividends for performance comparisons. Explain the
+bull case, bear case, material risks, what evidence is missing, and which conditions would change
+the conclusion. End with a non-binding suggestion from the allowed choices and a short human-review
+checklist. This is research, not financial advice."""
 
 
 def _display(value: Any) -> str:
@@ -100,12 +100,12 @@ class ResearchService:
         weights_only = bool(privacy.get("weights_only", True))
         include_quantities = bool(privacy.get("include_quantities", False)) and not weights_only
         include_dollars = bool(privacy.get("include_dollar_values", False)) and not weights_only
-        include_account = bool(privacy.get("include_account_type", False))
+        include_account = bool(privacy.get("include_account_name", False))
         effective_privacy = {
             "weights_only": weights_only,
             "include_quantities": include_quantities,
             "include_dollar_values": include_dollars,
-            "include_account_type": include_account,
+            "include_account_name": include_account,
         }
         generated_at = datetime.now(UTC).isoformat()
         missing = [
@@ -123,7 +123,7 @@ class ResearchService:
             f"# Manual review request: {holding['canonical_symbol']}",
             "",
             f"Generated: {generated_at}",
-            f"Holdings evidence as of: {_display(portfolio.get('source_as_of'))}",
+            f"Holdings snapshot as of: {_display(portfolio.get('snapshot_created_at'))}",
             "Workflow: Manual copy/export to Claude; no Claude API is connected.",
             "Guardrail: Research only. No order or brokerage action is authorized.",
             "",
@@ -132,19 +132,18 @@ class ResearchService:
             f"- Name: {holding['security_name']}",
             f"- Type: {holding['asset_type']}",
             f"- Exchange: {holding['exchange']}",
-            f"- Trading currency: {holding['trading_currency']} (not economic currency exposure)",
             f"- Portfolio weight: {_display(holding.get('portfolio_weight'))}",
         ]
         if include_account:
-            lines.append(f"- Account type: {holding['account_type']}")
+            lines.append(f"- Account: {holding['account_name']}")
         if include_quantities:
             lines.append(f"- Quantity: {_display(holding.get('quantity'))}")
         if include_dollars:
             lines.extend(
                 [
-                    f"- Average cost: {_display(holding.get('average_cost'))} {holding['trading_currency']}",
-                    f"- Market value: {_display(holding.get('market_value_cad'))} CAD",
-                    f"- Unrealized gain/loss: {_display(holding.get('unrealized_gain_loss_cad'))} CAD",
+                    f"- Average cost: {_display(holding.get('average_cost'))} USD",
+                    f"- Market value: {_display(holding.get('market_value'))} USD",
+                    f"- Unrealized gain/loss: {_display(holding.get('unrealized_gain_loss'))} USD",
                 ]
             )
         lines.extend(
@@ -168,7 +167,7 @@ class ResearchService:
                 f"- Observed value: {_display((trigger or {}).get('observed_value'))}",
                 "",
                 "## Latest independent price evidence",
-                f"- Price: {_display(holding.get('price'))} {_display(holding.get('price_currency'))}",
+                f"- Price: {_display(holding.get('price'))} USD",
                 f"- Status: {_display(holding.get('quote_status'))}",
                 f"- Price timestamp: {_display(holding.get('price_timestamp'))}",
                 f"- Fetch timestamp: {_display(holding.get('price_fetched_at'))}",
@@ -218,7 +217,7 @@ class ResearchService:
             "prompt_id": prompt_id,
             "privacy": effective_privacy,
             "markdown": markdown,
-            "holdings_as_of": portfolio.get("source_as_of"),
+            "holdings_as_of": portfolio.get("snapshot_created_at"),
             "evidence_as_of": (etf_evidence or {}).get("as_of"),
             "generated_at": generated_at,
         }

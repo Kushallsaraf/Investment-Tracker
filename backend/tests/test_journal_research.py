@@ -1,42 +1,18 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
+import pytest
 from app.database import Database
-from app.importers.wealthsimple import load_or_create_secret
 from app.journal_repository import JournalRepository
 from app.repository import PortfolioRepository
-from app.services.activities import normalize_snaptrade_activity, summarize_activity_preview
-from app.services.imports import ImportService
+from app.services.activities import ActivityService
 from app.services.journal import JournalService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
 from app.services.sectors import SectorService
-
-
-class FixedPrice:
-    source = "Synthetic adjusted-safe quote fixture"
-    supports_automatic_refresh = False
-    automatic_refresh_seconds = None
-
-    def quote(self, instrument: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "price": "120",
-            "currency": instrument["trading_currency"],
-            "observed_at": "2026-09-11T14:00:00+00:00",
-            "fetched_at": "2026-09-11T14:01:00+00:00",
-            "source": self.source,
-            "source_url": "https://example.invalid/synthetic",
-            "quote_status": "end_of_day",
-            "delay_minutes": None,
-            "stale": False,
-        }
-
-
-class NoFx:
-    def usd_cad(self) -> dict[str, Any]:
-        raise AssertionError("CAD fixture must not request FX")
+from fakes import FakePrices
 
 
 def build_services(
@@ -50,21 +26,9 @@ def build_services(
 ]:
     database = Database(tmp_path / "journal.sqlite3")
     portfolio_repository = PortfolioRepository(database)
-    portfolio_service = PortfolioService(
-        portfolio_repository, price_provider=FixedPrice(), fx_provider=NoFx()
+    PortfolioService(portfolio_repository, price_provider=FakePrices()).upsert_position(
+        symbol="ACME", quantity="2", average_cost="50", account_name="Brokerage"
     )
-    source = tmp_path / "synthetic.csv"
-    source.write_text(
-        "Account Type,Account Number,Symbol,Security Name,Security Type,"
-        "Exchange,Currency,Quantity,Average Cost\n"
-        "TFSA,SYNTHETIC-ONLY,ACME,Acme Inc.,Stock,TSX,CAD,2,50\n",
-        encoding="utf-8",
-    )
-    preview = ImportService(portfolio_repository).preview(source)
-    snapshot_id = ImportService(portfolio_repository).confirm(
-        preview["draft_id"], accept_warnings=True
-    )
-    portfolio_service.refresh(snapshot_id)
     holding = portfolio_repository.latest_portfolio()["holdings"][0]
     journal_repository = JournalRepository(database)
     journal = JournalService(journal_repository, portfolio_repository)
@@ -148,58 +112,63 @@ def test_review_pack_privacy_and_missing_evidence_are_explicit(tmp_path: Path) -
             "weights_only": True,
             "include_quantities": False,
             "include_dollar_values": False,
-            "include_account_type": False,
+            "include_account_name": False,
         },
         save=False,
     )
     markdown = pack["markdown"]
     assert "Quantity:" not in markdown
     assert "Average cost:" not in markdown
-    assert "Account type:" not in markdown
+    assert "Account:" not in markdown
+    assert "Brokerage" not in markdown
     assert "Adjusted total-return performance is not available" in markdown
     assert "Manual copy/export to Claude" in markdown
     assert "No order or brokerage action" in markdown
 
 
-def test_activity_identity_is_hashed_deterministic_and_changed_records_are_visible(tmp_path: Path) -> None:
-    secret = load_or_create_secret(tmp_path / "local.key")
-    raw = {
-        "id": "RAW-EXTERNAL-ID-MUST-NOT-BE-STORED",
-        "type": "DIVIDEND",
-        "symbol": {"symbol": "XIC", "exchange": {"suffix": ".TO"}},
-        "trade_date": "2026-06-30T00:00:00Z",
-        "amount": "10",
-        "currency": {"code": "CAD"},
-    }
-    first, warnings = normalize_snaptrade_activity(
-        raw,
-        account_fingerprint="LOCAL-HASH",
-        local_secret=secret,
-        source_as_of="2026-09-10T00:00:00Z",
+def test_activity_ledger_validates_records_and_summarizes_income(tmp_path: Path) -> None:
+    repository = PortfolioRepository(Database(tmp_path / "activity.sqlite3"))
+    activities = ActivityService(repository)
+    activities.record(
+        {"activity_type": "DIVIDEND", "symbol": "acme", "trade_date": "2026-06-30", "cash_amount": "12.50"}
     )
-    changed, _ = normalize_snaptrade_activity(
-        {**raw, "amount": "11"},
-        account_fingerprint="LOCAL-HASH",
-        local_secret=secret,
-        source_as_of="2026-09-10T00:00:00Z",
+    activities.record(
+        {"activity_type": "DIVIDEND", "symbol": "ACME", "trade_date": "2026-03-31", "cash_amount": "12"}
     )
-    assert warnings == []
-    assert first["activity_key"] == changed["activity_key"]
-    assert first["record_hash"] != changed["record_hash"]
-    assert raw["id"] not in str(first)
-    refreshed, _ = normalize_snaptrade_activity(
-        raw,
-        account_fingerprint="LOCAL-HASH",
-        local_secret=secret,
-        source_as_of="2026-09-11T00:00:00Z",
+    activities.record({"activity_type": "INTEREST", "trade_date": "2026-07-15", "cash_amount": "3.10"})
+    activities.record(
+        {"activity_type": "WITHHOLDING_TAX", "trade_date": "2026-06-30", "cash_amount": "-1.25"}
     )
-    assert refreshed["record_hash"] == first["record_hash"]
-    summary = summarize_activity_preview(
-        [changed],
-        {changed["activity_key"]: first["record_hash"]},
-        accounts=[],
-        unsupported_activity_types=set(),
-        incomplete=False,
+    activities.record(
+        {"activity_type": "DIVIDEND", "symbol": "ACME", "trade_date": "2024-01-02", "cash_amount": "9"}
     )
-    assert summary["additions"] == 0
-    assert summary["changed_records"] == 1
+    buy_id = activities.record(
+        {"activity_type": "BUY", "symbol": "BRK-B", "trade_date": "2026-08-01", "quantity": "1",
+         "price": "400"}
+    )
+
+    with pytest.raises(ValueError, match="needs a symbol"):
+        activities.record({"activity_type": "DIVIDEND", "trade_date": "2026-06-30", "cash_amount": "1"})
+    with pytest.raises(ValueError, match="not a supported US ticker"):
+        activities.record({"activity_type": "BUY", "symbol": "XIC.TO", "trade_date": "2026-06-30"})
+    with pytest.raises(ValueError, match="ISO date"):
+        activities.record({"activity_type": "FEE", "trade_date": "yesterday", "cash_amount": "-1"})
+    with pytest.raises(ValueError, match="Cash amount is required"):
+        activities.record({"activity_type": "DEPOSIT", "trade_date": "2026-06-30"})
+
+    listed = activities.list(symbol="brk")
+    assert [row["symbol"] for row in listed["activities"]] == ["BRK.B"]
+    assert activities.list()["coverage"]["count"] == 6
+
+    income = activities.income(now=datetime(2026, 9, 1, tzinfo=UTC))
+    assert income["received"] == "27.60"
+    assert income["withholding_tax"] == "1.25"
+    assert income["income_by_holding"] == [
+        {"symbol": "ACME", "amount": "24.50"},
+        {"symbol": "CASH", "amount": "3.10"},
+    ]
+
+    activities.delete(buy_id)
+    assert activities.list()["coverage"]["count"] == 5
+    with pytest.raises(KeyError):
+        activities.delete(buy_id)

@@ -1,31 +1,41 @@
 import { useState } from "react";
-import { cad, decisionLabel, percent, signedCad, statusLabel, statusTone, timestamp } from "../lib/format";
+import { decisionLabel, percent, signedUsd, statusLabel, statusTone, timestamp, usd } from "../lib/format";
 import type { Analytics, IncomePayload, JournalPayload, Portfolio, SectorAnalysis } from "../types";
 import { DataPanel, Donut, MissingDataWarning, SourceTimestamp, StatCell, ViewHeader } from "../components/ui";
 import type { MainTab } from "../components/AppShell";
 
-const EXPOSURE_COLORS: Record<string, string> = {
-  "Canada equity": "#78a9dd",
-  "United States": "#6cc6b0",
-  International: "#b190dd",
-  "Fixed income": "#d5aa64",
-  Cash: "#5e6874",
-  Unknown: "#3a424c",
-};
+const SECTOR_PALETTE = ["#78a9dd", "#6cc6b0", "#b190dd", "#d5aa64", "#e08a8a", "#8fc4e8", "#a3c47a", "#d49ac4", "#c9b48a", "#7fb8a8", "#9aa4d6", "#c78f6b"];
+const FIXED_COLORS: Record<string, string> = { Cash: "#5e6874", Unknown: "#3a424c" };
 
+// Cash has no cost basis or gain, so only securities count toward cost and gain coverage.
 function costSummary(portfolio: Portfolio) {
+  const securities = portfolio.holdings.filter((holding) => holding.asset_type !== "CASH");
   let cost = 0;
   let covered = 0;
-  for (const holding of portfolio.holdings) {
+  let gain = 0;
+  let gainBasis = 0;
+  let gainCount = 0;
+  for (const holding of securities) {
     const quantity = Number(holding.quantity);
     const average = Number(holding.average_cost);
-    const conversion = holding.trading_currency === "CAD" ? 1 : Number(portfolio.fx?.rate);
-    if ([quantity, average, conversion].every(Number.isFinite)) {
-      cost += quantity * average * conversion;
-      covered += 1;
+    if (holding.average_cost == null || ![quantity, average].every(Number.isFinite)) continue;
+    cost += quantity * average;
+    covered += 1;
+    const unrealized = Number(holding.unrealized_gain_loss);
+    if (holding.unrealized_gain_loss != null && Number.isFinite(unrealized)) {
+      gain += unrealized;
+      gainBasis += quantity * average;
+      gainCount += 1;
     }
   }
-  return { cost, coverage: portfolio.holdings.length ? covered / portfolio.holdings.length : 0 };
+  return {
+    cost,
+    coverage: securities.length ? covered / securities.length : 0,
+    gain,
+    gainPct: gainBasis > 0 ? gain / gainBasis : null,
+    gainCount,
+    securityCount: securities.length,
+  };
 }
 
 export function DashboardPage({
@@ -47,30 +57,19 @@ export function DashboardPage({
   if (!portfolio) {
     return (
       <>
-        <ViewHeader title="Portfolio dashboard" subtitle="TFSA · CAD reporting" />
-        <MissingDataWarning reason="No accepted portfolio snapshot exists. Connect or synchronize in Settings, review the preview, then apply it." />
+        <ViewHeader title="Portfolio dashboard" subtitle="US portfolio · USD reporting" />
+        <MissingDataWarning reason="No portfolio exists yet. Add positions on the Holdings tab, or load the synthetic demo portfolio in Settings." />
       </>
     );
   }
   const cost = costSummary(portfolio);
-  const gain = portfolio.holdings.reduce((sum, row) => {
-    const value = Number(row.unrealized_gain_loss_cad);
-    return sum + (Number.isFinite(value) ? value : 0);
-  }, 0);
-  const gainCoverage = portfolio.holdings.filter((row) => row.unrealized_gain_loss_cad != null).length;
-  const gainPct = cost.cost > 0 ? gain / cost.cost : null;
   const decisionByInstrument = new Map(
     (journal?.entries ?? []).map((entry) => [entry.holding.instrument_id, entry.decision?.decision]),
   );
-  const incomeCad = income?.received_by_currency.CAD;
-  const hasNonCadIncome = Object.entries(income?.received_by_currency ?? {}).some(
-    ([currency, value]) => currency !== "CAD" && Number(value) !== 0,
-  );
-  const exposure = analytics?.economic_exposure;
-  const exposureSegments = (exposure?.categories ?? []).map((row) => ({
-    label: row.name,
-    value: Number(row.weight),
-    color: EXPOSURE_COLORS[row.name] ?? EXPOSURE_COLORS.Unknown,
+  const sectorSegments = (sectors?.categories ?? []).map((row, index) => ({
+    label: row.sector,
+    value: Number(row.portfolio_weight),
+    color: FIXED_COLORS[row.sector] ?? SECTOR_PALETTE[index % SECTOR_PALETTE.length],
   }));
   const staleCount = portfolio.holdings.filter((row) => row.price_stale || !row.price).length;
   const newestQuote = [...portfolio.holdings]
@@ -83,18 +82,18 @@ export function DashboardPage({
     <>
       <ViewHeader
         title="Portfolio dashboard"
-        subtitle={`TFSA · ${portfolio.total_positions} holdings · CAD reporting`}
-        asOf={portfolio.source_as_of ?? portfolio.created_at}
+        subtitle={`${portfolio.data_origin === "demo" ? "Synthetic demo" : "Manual"} portfolio · ${portfolio.total_positions} holdings · USD reporting`}
+        asOf={portfolio.snapshot_created_at}
       />
       <section className="summary-strip" aria-label="Portfolio summary">
-        <StatCell label="Market value" value={cad(portfolio.total_cad)} detail={`CAD · ${percent(portfolio.position_coverage_pct)} price coverage`} />
-        <StatCell label="Total cost" value={cost.coverage ? cad(cost.cost) : "NOT AVAILABLE"} detail={`${percent(cost.coverage)} cost-basis coverage · latest FX`} />
-        <StatCell label="Unrealized gain" value={gainCoverage ? signedCad(gain) : "NOT AVAILABLE"} detail={gainPct == null ? "Missing cost basis" : `${percent(gainPct)} · ${gainCoverage}/${portfolio.total_positions} holdings`} tone={gain >= 0 ? "positive" : "negative"} />
+        <StatCell label="Market value" value={usd(portfolio.total_value)} detail={`USD · ${percent(portfolio.position_coverage_pct)} price coverage`} />
+        <StatCell label="Invested cost" value={cost.coverage ? usd(cost.cost) : "NOT AVAILABLE"} detail={`${percent(cost.coverage)} cost-basis coverage · excludes cash`} />
+        <StatCell label="Unrealized gain" value={cost.gainCount ? signedUsd(cost.gain) : "NOT AVAILABLE"} detail={cost.gainPct == null ? "Missing cost basis" : `${percent(cost.gainPct)} · ${cost.gainCount}/${cost.securityCount} securities`} tone={cost.gain >= 0 ? "positive" : "negative"} />
         <StatCell label="Today’s change" value="NOT AVAILABLE" detail="Previous-close data not stored" />
         <StatCell
           label="Annual income"
-          value={income?.coverage.complete ? cad(incomeCad ?? "0") : incomeCad ? cad(incomeCad) : "NOT AVAILABLE"}
-          detail={hasNonCadIncome ? "CAD portion only · activity-date FX unavailable" : income?.coverage.complete ? "Received · trailing 12 months" : "TTM activity coverage incomplete"}
+          value={income?.coverage.count ? usd(income.received) : "NOT AVAILABLE"}
+          detail={income?.coverage.count ? "Received · trailing 12 months · ledger" : "No activities recorded"}
         />
       </section>
       <section className="alert-strip" aria-label="Portfolio alerts">
@@ -103,18 +102,13 @@ export function DashboardPage({
         <div><strong className={Number(sectors?.etf_coverage_pct ?? 0) < 1 ? "warning" : "positive"}>ETF evidence coverage · {percent(sectors?.etf_coverage_pct)}</strong><span>{sectors?.evidence.length ?? 0} explicitly supported issuer profile{sectors?.evidence.length === 1 ? "" : "s"}</span></div>
       </section>
       <div className="two-panel-row">
-        <DataPanel title="Economic exposure" meta={exposure?.etf_lookthrough_available ? "ETF LOOK-THROUGH ON" : "ETF LOOK-THROUGH UNAVAILABLE"}>
-          {exposureSegments.length ? (
+        <DataPanel title="Sector allocation" meta={`${percent(sectors?.coverage_pct)} KNOWN`}>
+          {sectorSegments.length ? (
             <>
-              <Donut
-                segments={exposureSegments}
-                label="Known portfolio economic exposure and unknown exposure"
-                centerLabel={exposure?.etf_lookthrough_available ? "ETF look-through" : "Partial evidence"}
-              />
-              <div className="panel-warning">{exposure?.warning}</div>
-              <SourceTimestamp source={exposure?.source} asOf={exposure?.as_of} coverage={percent(exposure?.coverage_pct)} status="PARTIAL" />
+              <Donut segments={sectorSegments} label="Portfolio sector allocation, including unknown exposure" centerLabel="Sectors" />
+              <SourceTimestamp source="User classifications and supported issuer profiles" asOf={sectors?.calculated_at} coverage={percent(sectors?.coverage_pct)} status="UNKNOWN REMAINS VISIBLE" />
             </>
-          ) : <MissingDataWarning reason="Economic exposure requires verified issuer and company evidence. Trading currency is not substituted." />}
+          ) : <MissingDataWarning reason="No valued sector allocation is available. Classify stocks on the Holdings tab." />}
         </DataPanel>
         <DataPanel
           title="Total-return performance"
@@ -136,8 +130,8 @@ export function DashboardPage({
                 <tr key={row.position_id}>
                   <td className="symbol">{row.canonical_symbol}<small>{row.security_name}</small></td>
                   <td>{row.asset_type}</td>
-                  <td className="numeric">{cad(row.market_value_cad)}</td>
-                  <td className={`numeric ${Number(row.unrealized_gain_loss_cad) >= 0 ? "positive" : "negative"}`}>{signedCad(row.unrealized_gain_loss_cad)}</td>
+                  <td className="numeric">{usd(row.market_value)}</td>
+                  <td className={`numeric ${Number(row.unrealized_gain_loss) >= 0 ? "positive" : "negative"}`}>{row.unrealized_gain_loss == null ? "—" : signedUsd(row.unrealized_gain_loss)}</td>
                   <td className="numeric">{percent(row.portfolio_weight)}</td>
                   <td>{decisionLabel(decisionByInstrument.get(row.instrument_id))}</td>
                   <td className={statusTone(row)}>{statusLabel(row)}</td>

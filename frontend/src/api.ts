@@ -1,4 +1,5 @@
 import type {
+  ActivityInput,
   ActivityPayload,
   AIReview,
   Analytics,
@@ -9,13 +10,13 @@ import type {
   InvestmentProfile,
   JournalPayload,
   Portfolio,
+  PortfolioStatus,
+  PositionInput,
   PriceCapabilities,
   ReviewPack,
   ReviewPrivacy,
   SectorAnalysis,
   SectorName,
-  SnapTradeStatus,
-  SnapTradeSyncPreview,
 } from "./types";
 
 const WRITE_HEADERS = {
@@ -86,69 +87,51 @@ export async function getAIReviews(): Promise<AIReview[]> {
   return payload.reviews;
 }
 
-export async function getSnapTradeStatus(): Promise<SnapTradeStatus> {
-  return responseJson<SnapTradeStatus>(await fetch("/api/snaptrade/status"));
-}
-
-export async function checkSnapTradeConnection(): Promise<SnapTradeStatus> {
-  return responseJson<SnapTradeStatus>(await fetch("/api/snaptrade/connection/check", {
-    method: "POST",
-    headers: WRITE_HEADERS,
-  }));
+export async function getPortfolioStatus(): Promise<PortfolioStatus> {
+  return responseJson<PortfolioStatus>(await fetch("/api/portfolio/status"));
 }
 
 export async function getPriceCapabilities(): Promise<PriceCapabilities> {
   return responseJson<PriceCapabilities>(await fetch("/api/prices/capabilities"));
 }
 
-export async function createSnapTradePortal(): Promise<string> {
-  const payload = await responseJson<{ redirect_uri: string }>(await fetch("/api/snaptrade/portal", {
+export async function upsertPosition(position: PositionInput): Promise<string> {
+  const payload = await responseJson<{ symbol: string }>(await fetch("/api/portfolio/positions", {
     method: "POST",
     headers: WRITE_HEADERS,
+    body: JSON.stringify(position),
   }));
-  return payload.redirect_uri;
+  return payload.symbol;
 }
 
-export async function previewSnapTradeSync(): Promise<SnapTradeSyncPreview> {
-  return responseJson<SnapTradeSyncPreview>(await fetch("/api/snaptrade/sync/preview", {
+export async function loadDemoPortfolio(): Promise<void> {
+  await responseJson(await fetch("/api/portfolio/demo", {
     method: "POST",
     headers: WRITE_HEADERS,
+    body: JSON.stringify({ confirm: "LOAD DEMO" }),
   }));
 }
 
-export async function getPendingSnapTradeSync(): Promise<SnapTradeSyncPreview | null> {
-  const payload = await responseJson<{ preview: SnapTradeSyncPreview | null }>(await fetch("/api/snaptrade/sync/pending"));
-  return payload.preview;
-}
-
-export async function applySnapTradeSync(previewId: string): Promise<void> {
-  await responseJson(await fetch(`/api/snaptrade/sync/${previewId}/apply`, {
-    method: "POST",
-    headers: WRITE_HEADERS,
-    body: JSON.stringify({ confirm: "APPLY" }),
-  }));
-}
-
-export async function cancelSnapTradeSync(previewId: string): Promise<void> {
-  await responseJson(await fetch(`/api/snaptrade/sync/${previewId}`, {
-    method: "DELETE",
-    headers: WRITE_HEADERS,
-  }));
-}
-
-export async function disconnectSnapTrade(): Promise<void> {
-  await responseJson(await fetch("/api/snaptrade/disconnect", {
-    method: "POST",
-    headers: WRITE_HEADERS,
-    body: JSON.stringify({ confirm: "DISCONNECT" }),
-  }));
-}
-
-export async function deleteLocalBrokerageData(): Promise<void> {
-  await responseJson(await fetch("/api/snaptrade/local-data", {
+export async function deletePortfolioData(): Promise<void> {
+  await responseJson(await fetch("/api/portfolio/local-data", {
     method: "DELETE",
     headers: WRITE_HEADERS,
     body: JSON.stringify({ confirm: "DELETE LOCAL DATA" }),
+  }));
+}
+
+export async function createActivity(activity: ActivityInput): Promise<void> {
+  await responseJson(await fetch("/api/activity", {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify(activity),
+  }));
+}
+
+export async function deleteActivity(activityId: string): Promise<void> {
+  await responseJson(await fetch(`/api/activity/${activityId}`, {
+    method: "DELETE",
+    headers: WRITE_HEADERS,
   }));
 }
 

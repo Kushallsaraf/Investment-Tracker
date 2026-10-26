@@ -1,128 +1,118 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from app.database import Database
+from app.providers.prices import UnsupportedSymbolError
 from app.repository import PortfolioRepository
-from app.services.imports import ImportService
 from app.services.portfolio import PortfolioService
+from fakes import FakePrices
 
 
-class FakePrices:
-    def quote(self, instrument: dict) -> dict:
-        prices = {"XIC.TO": ("40", "CAD"), "AAPL": ("200", "USD")}
-        price, currency = prices[instrument["canonical_symbol"]]
-        now = datetime.now(UTC).isoformat()
-        return {
-            "price": price,
-            "currency": currency,
-            "observed_at": now,
-            "fetched_at": now,
-            "source": "Synthetic test prices",
-            "source_url": None,
-            "quote_status": "end_of_day",
-            "delay_minutes": None,
-            "stale": False,
-        }
-
-
-class FakeFx:
-    def usd_cad(self) -> dict:
-        now = datetime.now(UTC).isoformat()
-        return {
-            "base_currency": "USD",
-            "quote_currency": "CAD",
-            "rate": "1.35",
-            "observed_at": now,
-            "fetched_at": now,
-            "source": "Synthetic Bank of Canada fixture",
-            "source_url": None,
-            "stale": False,
-        }
-
-
-def _accepted_snapshot(tmp_path: Path) -> tuple[PortfolioRepository, str]:
+def _service(tmp_path: Path, prices: FakePrices | None = None) -> PortfolioService:
     repository = PortfolioRepository(Database(tmp_path / "portfolio.sqlite3"))
-    imports = ImportService(repository)
-    source = tmp_path / "holdings.csv"
-    source.write_text(
-        "Account Type,Account Number,Symbol,Security Name,Security Type,"
-        "Exchange,Currency,Quantity,Average Cost\n"
-        "TFSA,SYNTHETIC-1,XIC,iShares Core ETF,ETF,TSX,CAD,10,30\n"
-        "RRSP,SYNTHETIC-2,AAPL,Apple Inc,Stock,NASDAQ,USD,2,150\n",
-        encoding="utf-8",
-    )
-    preview = imports.preview(source)
-    return repository, imports.confirm(preview["draft_id"], accept_warnings=True)
+    return PortfolioService(repository, price_provider=prices or FakePrices())
 
 
-def test_cad_and_usd_positions_are_valued_in_cad(tmp_path: Path) -> None:
-    repository, holding_snapshot_id = _accepted_snapshot(tmp_path)
-    service = PortfolioService(repository, price_provider=FakePrices(), fx_provider=FakeFx())
+def test_manual_positions_are_valued_in_usd(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.upsert_position(symbol="acme", quantity="2", average_cost="100", account_name="Roth IRA")
+    service.upsert_position(symbol="SYNE", quantity="4", average_cost=None, account_name="Roth IRA")
+    service.upsert_position(symbol="cash", quantity="60", average_cost=None, account_name="Roth IRA")
 
-    service.refresh(holding_snapshot_id)
     portfolio = service.latest()
-
     assert portfolio is not None
-    assert portfolio["total_cad"] == "940.00"
-    assert portfolio["priced_positions"] == 2
-    assert portfolio["position_coverage_pct"] == "1"
-    assert {row["canonical_symbol"] for row in portfolio["holdings"]} == {"XIC.TO", "AAPL"}
-    apple = next(row for row in portfolio["holdings"] if row["canonical_symbol"] == "AAPL")
-    assert apple["market_value_cad"] == "540.00"
-    assert apple["unrealized_gain_loss_cad"] == "135.00"
+    assert portfolio["total_value"] == "500"
+    assert portfolio["data_origin"] == "manual"
+    by_symbol = {row["canonical_symbol"]: row for row in portfolio["holdings"]}
+    assert by_symbol["ACME"]["market_value"] == "240"
+    assert by_symbol["ACME"]["unrealized_gain_loss"] == "40"
+    assert by_symbol["ACME"]["account_name"] == "Roth IRA"
+    assert by_symbol["SYNE"]["unrealized_gain_loss"] is None
+    assert by_symbol["USD"]["asset_type"] == "CASH"
+    assert by_symbol["USD"]["price_source"] == "Currency face value"
+    assert by_symbol["USD"]["unrealized_gain_loss"] is None
+    assert service.status()["snapshot_count"] == 3
 
 
-class FailingPrices:
-    def quote(self, instrument: dict) -> dict:
-        raise RuntimeError("synthetic outage")
+def test_upsert_replaces_same_symbol_in_same_account_only(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.upsert_position(symbol="ACME", quantity="2", average_cost="100", account_name="Brokerage")
+    service.upsert_position(symbol="ACME", quantity="5", average_cost="110", account_name="Brokerage")
+    service.upsert_position(symbol="ACME", quantity="1", average_cost="90", account_name="Roth IRA")
+
+    holdings = service.latest()["holdings"]
+    quantities = sorted((row["account_name"], row["quantity"]) for row in holdings)
+    assert quantities == [("Brokerage", "5"), ("Roth IRA", "1")]
+    assert len(service.history()) == 3
 
 
-def test_imported_price_fallback_is_explicitly_stale(tmp_path: Path) -> None:
-    repository = PortfolioRepository(Database(tmp_path / "portfolio.sqlite3"))
-    imports = ImportService(repository)
-    source = tmp_path / "holdings.csv"
-    source.write_text(
-        "Account Type,Symbol,Security Type,Exchange,Currency,Quantity,Average Cost,Market Price\n"
-        "TFSA,XIC,ETF,TSX,CAD,10,30,35\n",
-        encoding="utf-8",
-    )
-    preview = imports.preview(source)
-    holding_snapshot_id = imports.confirm(preview["draft_id"], accept_warnings=True)
-    service = PortfolioService(repository, price_provider=FailingPrices(), fx_provider=FakeFx())
+def test_invalid_positions_are_rejected_before_storage(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    with pytest.raises(ValueError, match="positive"):
+        service.upsert_position(symbol="ACME", quantity="0", average_cost=None, account_name="")
+    with pytest.raises(ValueError, match="non-negative"):
+        service.upsert_position(symbol="ACME", quantity="1", average_cost="-3", account_name="")
+    with pytest.raises(UnsupportedSymbolError):
+        service.upsert_position(symbol="XIC.TO", quantity="1", average_cost=None, account_name="")
+    with pytest.raises(UnsupportedSymbolError):
+        service.upsert_position(symbol="NOPE", quantity="1", average_cost=None, account_name="")
+    assert service.latest() is None
 
-    service.refresh(holding_snapshot_id)
+
+def test_missing_price_is_explicit_and_excluded_from_total(tmp_path: Path) -> None:
+    prices = FakePrices()
+    service = _service(tmp_path, prices)
+    service.upsert_position(symbol="ACME", quantity="1", average_cost="100", account_name="")
+    del prices.prices["SYNE"]
+    service.upsert_position(symbol="SYNE", quantity="1", average_cost="40", account_name="")
+
     portfolio = service.latest()
+    assert portfolio["total_value"] == "120"
+    assert portfolio["priced_positions"] == 1
+    missing = next(row for row in portfolio["holdings"] if row["canonical_symbol"] == "SYNE")
+    assert missing["data_status"] == "missing"
+    assert missing["market_value"] is None
+    assert any("SYNE: latest price unavailable" in warning for warning in portfolio["warnings"])
 
-    assert portfolio is not None
-    assert portfolio["holdings"][0]["data_status"] == "imported_stale"
-    assert portfolio["holdings"][0]["quote_status"] == "imported"
-    assert any("using the imported price" in warning for warning in portfolio["warnings"])
+
+def test_removing_a_row_creates_a_new_snapshot_and_keeps_history(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.upsert_position(symbol="ACME", quantity="1", average_cost=None, account_name="")
+    service.upsert_position(symbol="SYNE", quantity="1", average_cost=None, account_name="")
+    acme = next(row for row in service.latest()["holdings"] if row["canonical_symbol"] == "ACME")
+
+    result = service.remove_position(acme["position_id"])
+    assert result["removed_symbol"] == "ACME"
+    assert [row["canonical_symbol"] for row in service.latest()["holdings"]] == ["SYNE"]
+    assert len(service.history()) == 3
+    with pytest.raises(ValueError, match="portfolio changed"):
+        service.remove_position(acme["position_id"])
+    with pytest.raises(KeyError):
+        service.remove_position("unknown")
 
 
-def test_cash_is_valued_at_face_value_without_market_lookup(tmp_path: Path) -> None:
-    repository = PortfolioRepository(Database(tmp_path / "cash.sqlite3"))
-    imports = ImportService(repository)
-    source = tmp_path / "cash-holdings.csv"
-    source.write_text(
-        "Account Type,Account Number,Symbol,Security Name,Security Type,"
-        "Exchange,Currency,Quantity,Average Cost\n"
-        "TFSA,SYNTHETIC-1,XIC,Synthetic ETF,ETF,TSX,CAD,10,30\n"
-        "TFSA,SYNTHETIC-1,CAD,Canadian Dollar,CURRENCY,,CAD,100,1\n",
-        encoding="utf-8",
-    )
-    preview = imports.preview(source)
-    holding_snapshot_id = imports.confirm(preview["draft_id"], accept_warnings=True)
-    service = PortfolioService(repository, price_provider=FakePrices(), fx_provider=FakeFx())
+def test_demo_portfolio_loads_reloads_and_refuses_to_mix_with_manual_data(tmp_path: Path) -> None:
+    demo_symbols = ("AAPL", "MSFT", "NVDA", "JPM", "JNJ", "XOM", "VOO", "QQQ")
+    prices = FakePrices({symbol: "100" for symbol in demo_symbols})
+    service = _service(tmp_path, prices)
+    service.load_demo()
+    first = service.latest()
+    assert first["data_origin"] == "demo"
+    assert first["total_positions"] == 9
+    assert service.repository.activity_count("demo") > 0
+    tech = next(row for row in first["holdings"] if row["canonical_symbol"] == "AAPL")
+    assert tech["manual_sector"] == "Information Technology"
 
-    service.refresh(holding_snapshot_id)
-    portfolio = service.latest()
+    activity_count = service.repository.activity_count("demo")
+    service.load_demo()
+    assert service.repository.activity_count("demo") == activity_count
+    assert service.status()["snapshot_count"] == 1
 
-    assert portfolio is not None
-    assert portfolio["total_cad"] == "500"
-    cash = next(row for row in portfolio["holdings"] if row["asset_type"] == "CASH")
-    assert cash["canonical_symbol"] == "CASH-CAD"
-    assert cash["price"] == "1"
-    assert cash["quote_status"] == "not_applicable"
-    assert cash["price_source"] == "Currency face value"
+    assert service.delete_data() == 1
+    assert service.latest() is None
+    prices.prices["ACME"] = "120"
+    service.upsert_position(symbol="ACME", quantity="1", average_cost=None, account_name="")
+    with pytest.raises(ValueError, match="Delete local portfolio data"):
+        service.load_demo()
