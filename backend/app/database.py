@@ -202,6 +202,294 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON snaptrade_sync_previews(expires_at);
         """,
     ),
+    (
+        5,
+        """
+        ALTER TABLE snaptrade_sync_previews
+            ADD COLUMN activities_json TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE snaptrade_sync_previews
+            ADD COLUMN activity_summary_json TEXT NOT NULL DEFAULT '{}';
+
+        CREATE TABLE IF NOT EXISTS brokerage_activities (
+            activity_key TEXT PRIMARY KEY,
+            account_fingerprint TEXT NOT NULL,
+            normalized_type TEXT NOT NULL CHECK (
+                normalized_type IN (
+                    'BUY', 'SELL', 'DISTRIBUTION', 'DEPOSIT', 'WITHDRAWAL',
+                    'FEE', 'INTEREST', 'WITHHOLDING_TAX', 'TRANSFER', 'OTHER'
+                )
+            ),
+            symbol TEXT,
+            trade_date TEXT,
+            settlement_date TEXT,
+            quantity TEXT,
+            price TEXT,
+            currency TEXT,
+            fee TEXT,
+            cash_amount TEXT,
+            source TEXT NOT NULL,
+            source_as_of TEXT,
+            record_hash TEXT NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            holding_snapshot_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_brokerage_activities_date
+            ON brokerage_activities(trade_date DESC);
+        CREATE INDEX IF NOT EXISTS idx_brokerage_activities_symbol
+            ON brokerage_activities(symbol, trade_date DESC);
+
+        CREATE TABLE IF NOT EXISTS brokerage_activity_revisions (
+            id TEXT PRIMARY KEY,
+            activity_key TEXT NOT NULL,
+            record_hash TEXT NOT NULL,
+            normalized_json TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            holding_snapshot_id TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_brokerage_activity_revisions_key
+            ON brokerage_activity_revisions(activity_key, observed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS activity_coverage (
+            account_fingerprint TEXT PRIMARY KEY,
+            coverage_start TEXT,
+            coverage_end TEXT,
+            complete_initial_sync INTEGER NOT NULL CHECK (complete_initial_sync IN (0, 1)),
+            source_as_of TEXT,
+            last_synced_at TEXT NOT NULL,
+            warning TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS investment_profiles (
+            instrument_id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            portfolio_role TEXT CHECK (
+                portfolio_role IN ('CORE', 'DIVERSIFIER', 'INCOME', 'SPECULATIVE')
+            ),
+            thesis_strength INTEGER CHECK (thesis_strength BETWEEN 1 AND 5),
+            why_owned TEXT NOT NULL DEFAULT '',
+            supporting_evidence TEXT NOT NULL DEFAULT '',
+            principal_risks TEXT NOT NULL DEFAULT '',
+            invalidation_conditions TEXT NOT NULL DEFAULT '',
+            maximum_weight TEXT,
+            source_links_json TEXT NOT NULL DEFAULT '[]',
+            last_reviewed_date TEXT,
+            next_review_date TEXT,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS current_decisions (
+            instrument_id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            decision TEXT NOT NULL CHECK (
+                decision IN ('WATCH', 'HOLD', 'CONSIDER_ADD', 'CONSIDER_REDUCE', 'EXIT_CANDIDATE')
+            ),
+            reason TEXT NOT NULL DEFAULT '',
+            decision_date TEXT NOT NULL,
+            review_due_date TEXT,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS decision_history (
+            id TEXT PRIMARY KEY,
+            instrument_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            decision_date TEXT NOT NULL,
+            previous_decision TEXT,
+            new_decision TEXT NOT NULL CHECK (
+                new_decision IN ('WATCH', 'HOLD', 'CONSIDER_ADD', 'CONSIDER_REDUCE', 'EXIT_CANDIDATE')
+            ),
+            reason TEXT NOT NULL DEFAULT '',
+            claude_disposition TEXT CHECK (
+                claude_disposition IN ('ACCEPTED', 'REJECTED', 'CONSIDERING')
+            ),
+            review_due_date TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_decision_history_instrument_date
+            ON decision_history(instrument_id, decision_date DESC, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS review_triggers (
+            id TEXT PRIMARY KEY,
+            instrument_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            trigger_type TEXT NOT NULL CHECK (
+                trigger_type IN (
+                    'PRICE_BELOW', 'PRICE_ABOVE', 'CONSIDER_ADD_RANGE',
+                    'CONSIDER_REDUCE_RANGE', 'DATE', 'AFTER_EARNINGS', 'THESIS_NOTE'
+                )
+            ),
+            lower_value TEXT,
+            upper_value TEXT,
+            trigger_date TEXT,
+            note TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL DEFAULT '',
+            expires_at TEXT,
+            state TEXT NOT NULL CHECK (state IN ('ACTIVE', 'TRIGGERED', 'EXPIRED', 'DISMISSED')),
+            created_at TEXT NOT NULL,
+            triggered_at TEXT,
+            observed_value TEXT,
+            quote_source TEXT,
+            quote_timestamp TEXT,
+            frozen_holding_snapshot_id TEXT,
+            frozen_valuation_snapshot_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_triggers_instrument_state
+            ON review_triggers(instrument_id, state, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS local_alerts (
+            id TEXT PRIMARY KEY,
+            trigger_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            message TEXT NOT NULL,
+            dismissed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS claude_prompts (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            prompt_text TEXT NOT NULL,
+            is_default INTEGER NOT NULL CHECK (is_default IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS claude_review_exports (
+            id TEXT PRIMARY KEY,
+            instrument_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            trigger_id TEXT,
+            prompt_id TEXT NOT NULL,
+            privacy_json TEXT NOT NULL,
+            markdown_text TEXT NOT NULL,
+            holdings_as_of TEXT,
+            evidence_as_of TEXT,
+            generated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ai_reviews (
+            id TEXT PRIMARY KEY,
+            instrument_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            review_date TEXT NOT NULL,
+            evidence_as_of TEXT,
+            suggestion TEXT NOT NULL CHECK (
+                suggestion IN (
+                    'CONSIDER_BUY', 'HOLD', 'CONSIDER_REDUCE',
+                    'CONSIDER_EXIT', 'INSUFFICIENT_DATA'
+                )
+            ),
+            explanation TEXT NOT NULL DEFAULT '',
+            bull_case TEXT NOT NULL DEFAULT '',
+            bear_case TEXT NOT NULL DEFAULT '',
+            principal_risks TEXT NOT NULL DEFAULT '',
+            missing_information TEXT NOT NULL DEFAULT '',
+            change_conditions TEXT NOT NULL DEFAULT '',
+            source_links_json TEXT NOT NULL DEFAULT '[]',
+            claude_model TEXT,
+            disposition TEXT NOT NULL CHECK (
+                disposition IN ('ACCEPTED', 'REJECTED', 'CONSIDERING')
+            ),
+            original_markdown TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_reviews_instrument_date
+            ON ai_reviews(instrument_id, review_date DESC, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS historical_price_observations (
+            id TEXT PRIMARY KEY,
+            instrument_id TEXT NOT NULL,
+            observation_date TEXT NOT NULL,
+            value TEXT NOT NULL,
+            currency TEXT NOT NULL,
+            series_type TEXT NOT NULL CHECK (
+                series_type IN ('ADJUSTED_TOTAL_RETURN', 'RAW_CLOSE')
+            ),
+            distributions_included INTEGER NOT NULL CHECK (distributions_included IN (0, 1)),
+            source TEXT NOT NULL,
+            source_url TEXT,
+            observed_at TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            UNIQUE(instrument_id, observation_date, series_type, source)
+        );
+
+        CREATE TABLE IF NOT EXISTS etf_evidence_profiles (
+            id TEXT PRIMARY KEY,
+            instrument_id TEXT,
+            symbol TEXT NOT NULL,
+            issuer TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            evidence_type TEXT NOT NULL,
+            data_as_of TEXT NOT NULL,
+            verified_on TEXT NOT NULL,
+            method TEXT NOT NULL,
+            coverage_pct TEXT NOT NULL,
+            mer_pct TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_etf_evidence_symbol_date
+            ON etf_evidence_profiles(symbol, data_as_of DESC, verified_on DESC);
+
+        CREATE TABLE IF NOT EXISTS etf_evidence_holdings (
+            id TEXT PRIMARY KEY,
+            evidence_id TEXT NOT NULL REFERENCES etf_evidence_profiles(id) ON DELETE CASCADE,
+            holding_key TEXT NOT NULL,
+            holding_name TEXT NOT NULL,
+            weight TEXT NOT NULL,
+            sector TEXT,
+            country TEXT,
+            economic_currency TEXT,
+            UNIQUE(evidence_id, holding_key)
+        );
+        """,
+    ),
+    (
+        6,
+        """
+        ALTER TABLE holding_snapshots ADD COLUMN data_origin TEXT CHECK (
+            data_origin IN ('legacy', 'snaptrade') OR data_origin IS NULL
+        );
+
+        UPDATE holding_snapshots
+        SET data_origin = CASE
+            WHEN source_type = 'snaptrade_read_sync' THEN 'snaptrade'
+            WHEN source_type != 'manual_row_removal' THEN 'legacy'
+            ELSE NULL
+        END;
+
+        UPDATE holding_snapshots
+        SET data_origin = (
+            SELECT CASE
+                WHEN parent.source_type = 'snaptrade_read_sync' THEN 'snaptrade'
+                ELSE 'legacy'
+            END
+            FROM holding_snapshots AS parent
+            WHERE parent.imported_at < holding_snapshots.imported_at
+              AND parent.source_type != 'manual_row_removal'
+            ORDER BY parent.imported_at DESC
+            LIMIT 1
+        )
+        WHERE source_type = 'manual_row_removal';
+        """,
+    ),
+    (
+        7,
+        """
+        -- Repair installations where migration 5 was recorded before the
+        -- activity-revisions table was added to that migration's source.
+        CREATE TABLE IF NOT EXISTS brokerage_activity_revisions (
+            id TEXT PRIMARY KEY,
+            activity_key TEXT NOT NULL,
+            record_hash TEXT NOT NULL,
+            normalized_json TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            holding_snapshot_id TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_brokerage_activity_revisions_key
+            ON brokerage_activity_revisions(activity_key, observed_at DESC);
+        """,
+    ),
 )
 
 

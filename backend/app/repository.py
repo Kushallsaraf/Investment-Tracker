@@ -139,6 +139,8 @@ class PortfolioRepository:
         rows: list[dict[str, Any]],
         changes: dict[str, Any],
         issues: list[dict[str, Any]],
+        activities: list[dict[str, Any]] | None = None,
+        activity_summary: dict[str, Any] | None = None,
         holdings_as_of: str | None,
         last_successful_sync_at: str | None,
     ) -> dict[str, Any]:
@@ -153,8 +155,9 @@ class PortfolioRepository:
                 """
                 INSERT INTO snaptrade_sync_previews
                     (id, created_at, expires_at, holdings_as_of,
-                     last_successful_sync_at, rows_json, changes_json, issues_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     last_successful_sync_at, rows_json, changes_json, issues_json,
+                     activities_json, activity_summary_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     preview_id,
@@ -165,6 +168,8 @@ class PortfolioRepository:
                     _json(rows),
                     _json(changes),
                     _json(issues),
+                    _json(activities or []),
+                    _json(activity_summary or {}),
                 ),
             )
         return self.snaptrade_preview(preview_id)
@@ -188,7 +193,31 @@ class PortfolioRepository:
             "rows": json.loads(row["rows_json"]),
             "changes": json.loads(row["changes_json"]),
             "issues": json.loads(row["issues_json"]),
+            "activities": json.loads(row["activities_json"]),
+            "activity_summary": json.loads(row["activity_summary_json"]),
         }
+
+    def brokerage_activity_hashes(self, keys: list[str]) -> dict[str, str]:
+        """Return stored normalized hashes without exposing brokerage identifiers."""
+        if not keys:
+            return {}
+        unique_keys = list(dict.fromkeys(keys))
+        placeholders = ",".join("?" for _ in unique_keys)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT activity_key, record_hash FROM brokerage_activities "  # noqa: S608
+                f"WHERE activity_key IN ({placeholders})",
+                unique_keys,
+            ).fetchall()
+        return {str(row["activity_key"]): str(row["record_hash"]) for row in rows}
+
+    def activity_coverage_for(self, account_fingerprint: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM activity_coverage WHERE account_fingerprint = ?",
+                (account_fingerprint,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def latest_snaptrade_preview(self) -> dict[str, Any] | None:
         """Return the newest unexpired preview so the UI can recover after navigation."""
@@ -224,6 +253,8 @@ class PortfolioRepository:
         preview = self.snaptrade_preview(preview_id)
         rows = rows_override if rows_override is not None else preview["rows"]
         issues = issues_override if issues_override is not None else preview["issues"]
+        activities = preview.get("activities") or []
+        activity_summary = preview.get("activity_summary") or {}
         if any(issue["severity"] == "error" for issue in issues):
             raise ValueError("Resolve every synchronization error before applying this snapshot")
         snapshot_id = uuid.uuid4().hex
@@ -232,8 +263,9 @@ class PortfolioRepository:
             connection.execute(
                 """
                 INSERT INTO holding_snapshots
-                    (id, imported_at, source_type, source_file_hash, source_as_of, position_count)
-                VALUES (?, ?, 'snaptrade_read_sync', ?, ?, ?)
+                    (id, imported_at, source_type, source_file_hash, source_as_of,
+                     position_count, data_origin)
+                VALUES (?, ?, 'snaptrade_read_sync', ?, ?, ?, 'snaptrade')
                 """,
                 (
                     snapshot_id,
@@ -331,6 +363,104 @@ class PortfolioRepository:
                         row["average_cost"],
                     ),
                 )
+
+            for activity in activities:
+                existing = connection.execute(
+                    "SELECT record_hash FROM brokerage_activities WHERE activity_key = ?",
+                    (activity["activity_key"],),
+                ).fetchone()
+                if existing is None or existing["record_hash"] != activity["record_hash"]:
+                    connection.execute(
+                        """
+                        INSERT INTO brokerage_activity_revisions
+                            (id, activity_key, record_hash, normalized_json, observed_at,
+                             holding_snapshot_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            uuid.uuid4().hex,
+                            activity["activity_key"],
+                            activity["record_hash"],
+                            _json(
+                                {
+                                    key: value
+                                    for key, value in activity.items()
+                                    if key not in {"account_fingerprint"}
+                                }
+                            ),
+                            applied_at,
+                            snapshot_id,
+                        ),
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO brokerage_activities
+                        (activity_key, account_fingerprint, normalized_type, symbol,
+                         trade_date, settlement_date, quantity, price, currency, fee,
+                         cash_amount, source, source_as_of, record_hash, first_seen_at,
+                         last_seen_at, holding_snapshot_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(activity_key) DO UPDATE SET
+                        normalized_type = excluded.normalized_type,
+                        symbol = excluded.symbol,
+                        trade_date = excluded.trade_date,
+                        settlement_date = excluded.settlement_date,
+                        quantity = excluded.quantity,
+                        price = excluded.price,
+                        currency = excluded.currency,
+                        fee = excluded.fee,
+                        cash_amount = excluded.cash_amount,
+                        source_as_of = excluded.source_as_of,
+                        record_hash = excluded.record_hash,
+                        last_seen_at = excluded.last_seen_at,
+                        holding_snapshot_id = excluded.holding_snapshot_id
+                    """,
+                    (
+                        activity["activity_key"],
+                        activity["account_fingerprint"],
+                        activity["normalized_type"],
+                        activity.get("symbol"),
+                        activity.get("trade_date"),
+                        activity.get("settlement_date"),
+                        activity.get("quantity"),
+                        activity.get("price"),
+                        activity.get("currency"),
+                        activity.get("fee"),
+                        activity.get("cash_amount"),
+                        "SnapTrade daily activities",
+                        activity.get("source_as_of"),
+                        activity["record_hash"],
+                        applied_at,
+                        applied_at,
+                        snapshot_id,
+                    ),
+                )
+
+            for coverage in activity_summary.get("accounts", []):
+                connection.execute(
+                    """
+                    INSERT INTO activity_coverage
+                        (account_fingerprint, coverage_start, coverage_end,
+                         complete_initial_sync, source_as_of, last_synced_at, warning)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_fingerprint) DO UPDATE SET
+                        coverage_start = excluded.coverage_start,
+                        coverage_end = excluded.coverage_end,
+                        complete_initial_sync = excluded.complete_initial_sync,
+                        source_as_of = excluded.source_as_of,
+                        last_synced_at = excluded.last_synced_at,
+                        warning = excluded.warning
+                    """,
+                    (
+                        coverage["account_fingerprint"],
+                        coverage.get("coverage_start"),
+                        coverage.get("coverage_end"),
+                        int(bool(coverage.get("complete_initial_sync"))),
+                        coverage.get("source_as_of"),
+                        applied_at,
+                        coverage.get("warning"),
+                    ),
+                )
             connection.execute("DELETE FROM snaptrade_sync_previews WHERE id = ?", (preview_id,))
         return snapshot_id
 
@@ -338,11 +468,31 @@ class PortfolioRepository:
         """Delete SnapTrade-derived local data while retaining legacy snapshots."""
         with self.database.transaction() as connection:
             snapshot_rows = connection.execute(
-                "SELECT id FROM holding_snapshots WHERE source_type = 'snaptrade_read_sync'"
+                "SELECT id FROM holding_snapshots WHERE data_origin = 'snaptrade'"
             ).fetchall()
             snapshot_ids = [row["id"] for row in snapshot_rows]
             if snapshot_ids:
                 placeholders = ",".join("?" for _ in snapshot_ids)
+                activity_keys = [
+                    str(row["activity_key"])
+                    for row in connection.execute(
+                        f"SELECT activity_key FROM brokerage_activities "  # noqa: S608
+                        f"WHERE holding_snapshot_id IN ({placeholders})",
+                        snapshot_ids,
+                    ).fetchall()
+                ]
+                if activity_keys:
+                    activity_placeholders = ",".join("?" for _ in activity_keys)
+                    connection.execute(
+                        f"DELETE FROM brokerage_activity_revisions "  # noqa: S608
+                        f"WHERE activity_key IN ({activity_placeholders})",
+                        activity_keys,
+                    )
+                connection.execute(
+                    f"DELETE FROM brokerage_activities "  # noqa: S608
+                    f"WHERE holding_snapshot_id IN ({placeholders})",
+                    snapshot_ids,
+                )
                 valuation_rows = connection.execute(
                     f"SELECT id FROM valuation_snapshots "  # noqa: S608
                     f"WHERE holding_snapshot_id IN ({placeholders})",
@@ -365,22 +515,9 @@ class PortfolioRepository:
                     f"DELETE FROM holding_snapshots WHERE id IN ({placeholders})",  # noqa: S608
                     snapshot_ids,
                 )
+            connection.execute("DELETE FROM activity_coverage")
             connection.execute("DELETE FROM snaptrade_sync_previews")
             connection.execute("DELETE FROM accounts WHERE id NOT IN (SELECT account_id FROM positions)")
-            orphaned = connection.execute(
-                "SELECT id FROM instruments WHERE id NOT IN (SELECT instrument_id FROM positions)"
-            ).fetchall()
-            orphaned_ids = [row["id"] for row in orphaned]
-            if orphaned_ids:
-                placeholders = ",".join("?" for _ in orphaned_ids)
-                connection.execute(
-                    f"DELETE FROM price_quotes WHERE instrument_id IN ({placeholders})",  # noqa: S608
-                    orphaned_ids,
-                )
-                connection.execute(
-                    f"DELETE FROM instruments WHERE id IN ({placeholders})",  # noqa: S608
-                    orphaned_ids,
-                )
             connection.execute(
                 """
                 UPDATE snaptrade_sync_state
@@ -405,8 +542,9 @@ class PortfolioRepository:
             connection.execute(
                 """
                 INSERT INTO holding_snapshots
-                    (id, imported_at, source_type, source_file_hash, source_as_of, position_count)
-                VALUES (?, ?, 'wealthsimple_holdings_csv', ?, ?, ?)
+                    (id, imported_at, source_type, source_file_hash, source_as_of,
+                     position_count, data_origin)
+                VALUES (?, ?, 'wealthsimple_holdings_csv', ?, ?, ?, 'legacy')
                 """,
                 (
                     snapshot_id,
@@ -572,11 +710,13 @@ class PortfolioRepository:
                 """,
                 (latest["id"], position_id),
             ).fetchall()
+            parent_origin = str(latest["data_origin"] or "legacy")
             connection.execute(
                 """
                 INSERT INTO holding_snapshots
-                    (id, imported_at, source_type, source_file_hash, source_as_of, position_count)
-                VALUES (?, ?, 'manual_row_removal', ?, ?, ?)
+                    (id, imported_at, source_type, source_file_hash, source_as_of,
+                     position_count, data_origin)
+                VALUES (?, ?, 'manual_row_removal', ?, ?, ?, ?)
                 """,
                 (
                     snapshot_id,
@@ -584,6 +724,7 @@ class PortfolioRepository:
                     f"manual-row-removal:{snapshot_id}",
                     latest["source_as_of"],
                     len(remaining),
+                    parent_origin,
                 ),
             )
             for row in remaining:
@@ -837,3 +978,99 @@ class PortfolioRepository:
                 (safe_limit,),
             ).fetchall()
         return list(reversed([dict(row) for row in rows]))
+
+    def activities_view(
+        self,
+        *,
+        activity_type: str | None = None,
+        symbol: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        safe_types = {
+            "BUY",
+            "SELL",
+            "DISTRIBUTION",
+            "DEPOSIT",
+            "WITHDRAWAL",
+            "FEE",
+            "INTEREST",
+            "WITHHOLDING_TAX",
+            "TRANSFER",
+            "OTHER",
+        }
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        if activity_type:
+            normalized = activity_type.strip().upper()
+            if normalized not in safe_types:
+                raise ValueError("Unsupported activity filter")
+            clauses.append("normalized_type = ?")
+            parameters.append(normalized)
+        if symbol:
+            clauses.append("symbol LIKE ?")
+            parameters.append(f"%{symbol.strip().upper()}%")
+        if start_date:
+            clauses.append("trade_date >= ?")
+            parameters.append(start_date)
+        if end_date:
+            clauses.append("trade_date <= ?")
+            parameters.append(end_date)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        safe_limit = max(1, min(int(limit), 5_000))
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT activity_key AS id, normalized_type, symbol, trade_date,
+                       settlement_date, quantity, price, currency, fee, cash_amount,
+                       source, source_as_of
+                FROM brokerage_activities
+                """
+                + where
+                + " ORDER BY trade_date DESC, activity_key LIMIT ?",
+                (*parameters, safe_limit),
+            ).fetchall()
+            coverage_rows = connection.execute(
+                """
+                SELECT coverage_start, coverage_end, complete_initial_sync,
+                       source_as_of, last_synced_at, warning
+                FROM activity_coverage
+                ORDER BY last_synced_at DESC
+                """
+            ).fetchall()
+        coverage = {
+            "start": min(
+                (str(row["coverage_start"]) for row in coverage_rows if row["coverage_start"]),
+                default=None,
+            ),
+            "end": max(
+                (str(row["coverage_end"]) for row in coverage_rows if row["coverage_end"]),
+                default=None,
+            ),
+            "complete": bool(coverage_rows)
+            and all(bool(row["complete_initial_sync"]) for row in coverage_rows),
+            "source_as_of": min(
+                (str(row["source_as_of"]) for row in coverage_rows if row["source_as_of"]),
+                default=None,
+            ),
+            "last_synced_at": max(
+                (str(row["last_synced_at"]) for row in coverage_rows if row["last_synced_at"]),
+                default=None,
+            ),
+        }
+        warnings = [str(row["warning"]) for row in coverage_rows if row["warning"]]
+        if not coverage_rows:
+            warnings.append("No completed brokerage activity history has been synchronized.")
+        else:
+            warnings.append(
+                "Coverage spans all pages returned by SnapTrade between the shown dates; "
+                "account-lifetime brokerage coverage is not independently guaranteed."
+            )
+        return {
+            "activities": [dict(row) for row in rows],
+            "coverage": coverage,
+            "warnings": list(dict.fromkeys(warnings)),
+            "freshness": "daily_cached",
+            "source": "SnapTrade daily completed activities",
+        }

@@ -12,14 +12,25 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.config import settings
 from app.database import Database
 from app.integrations.snaptrade import MacOSKeychainCredentialProvider, ReadOnlySnapTradeClient
+from app.journal_repository import JournalRepository
 from app.repository import PortfolioRepository
 from app.schemas import (
+    AIReviewCreate,
     ApplySnapTradeSyncRequest,
+    ClaudePromptUpsert,
+    DecisionUpdate,
     DeleteLocalBrokerageDataRequest,
     DisconnectSnapTradeRequest,
+    InvestmentProfileUpdate,
+    ReviewPackRequest,
     SectorUpdateRequest,
+    TriggerCreate,
 )
+from app.services.activities import ActivityService
+from app.services.analytics import AnalyticsService
+from app.services.journal import JournalService
 from app.services.portfolio import PortfolioService
+from app.services.research import ResearchService
 from app.services.sectors import SectorService
 from app.services.snaptrade import (
     SnapTradeSyncError,
@@ -39,8 +50,8 @@ def require_local_write(
 
 
 app = FastAPI(
-    title="Portfolio Manager",
-    version="0.2.0",
+    title="Investment Tracker",
+    version="0.3.0",
     docs_url="/api/docs",
     redoc_url=None,
 )
@@ -51,8 +62,13 @@ app.add_middleware(
 
 _database = Database()
 _repository = PortfolioRepository(_database)
+_journal_repository = JournalRepository(_database)
 _portfolio_service = PortfolioService(_repository)
 _sector_service = SectorService(_repository)
+_activity_service = ActivityService(_repository)
+_analytics_service = AnalyticsService(_repository, _sector_service)
+_journal_service = JournalService(_journal_repository, _repository)
+_research_service = ResearchService(_journal_repository, _repository, _sector_service)
 _snaptrade_service = SnapTradeSyncService(
     _repository,
     _portfolio_service,
@@ -74,6 +90,22 @@ def sector_service() -> SectorService:
 
 def snaptrade_service() -> SnapTradeSyncService:
     return _snaptrade_service
+
+
+def activity_service() -> ActivityService:
+    return _activity_service
+
+
+def analytics_service() -> AnalyticsService:
+    return _analytics_service
+
+
+def journal_service() -> JournalService:
+    return _journal_service
+
+
+def research_service() -> ResearchService:
+    return _research_service
 
 
 @app.get("/api/health")
@@ -221,6 +253,158 @@ def portfolio_history(
 def portfolio_sectors(service: SectorService = Depends(sector_service)) -> dict:
     analysis = service.latest()
     return {"status": "ok" if analysis else "empty", "analysis": analysis}
+
+
+@app.get("/api/analytics")
+def portfolio_analytics(service: AnalyticsService = Depends(analytics_service)) -> dict:
+    return {"status": "ok", "analytics": service.overview()}
+
+
+@app.get("/api/activity")
+def brokerage_activity(
+    activity_type: str | None = Query(default=None, max_length=40),
+    symbol: str | None = Query(default=None, max_length=40),
+    start_date: str | None = Query(default=None, max_length=40),
+    end_date: str | None = Query(default=None, max_length=40),
+    limit: int = Query(default=500, ge=1, le=5_000),
+    service: ActivityService = Depends(activity_service),
+) -> dict:
+    try:
+        return {"status": "ok", **service.list(
+            activity_type=activity_type,
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+        )}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/income")
+def portfolio_income(service: ActivityService = Depends(activity_service)) -> dict:
+    return {"status": "ok", "income": service.income()}
+
+
+@app.get("/api/journal")
+def investment_journal(service: JournalService = Depends(journal_service)) -> dict:
+    return {"status": "ok", "journal": service.overview()}
+
+
+@app.put(
+    "/api/journal/instruments/{instrument_id}/profile",
+    dependencies=[Depends(require_local_write)],
+)
+def update_investment_profile(
+    instrument_id: str,
+    request: InvestmentProfileUpdate,
+    service: JournalService = Depends(journal_service),
+) -> dict:
+    try:
+        profile = service.save_profile(instrument_id, request.model_dump(mode="json"))
+        return {"status": "ok", "profile": profile}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/journal/instruments/{instrument_id}/decisions",
+    dependencies=[Depends(require_local_write)],
+)
+def record_investment_decision(
+    instrument_id: str,
+    request: DecisionUpdate,
+    service: JournalService = Depends(journal_service),
+) -> dict:
+    try:
+        history = service.save_decision(instrument_id, request.model_dump(mode="json"))
+        return {"status": "ok", "history": history}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/journal/instruments/{instrument_id}/triggers",
+    dependencies=[Depends(require_local_write)],
+)
+def create_review_trigger(
+    instrument_id: str,
+    request: TriggerCreate,
+    service: JournalService = Depends(journal_service),
+) -> dict:
+    try:
+        trigger = service.create_trigger(instrument_id, request.model_dump(mode="json"))
+        return {"status": "ok", "trigger": trigger}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/research/prompts")
+def reusable_prompts(service: ResearchService = Depends(research_service)) -> dict:
+    return {"status": "ok", "prompts": service.prompts()}
+
+
+@app.put("/api/research/prompts", dependencies=[Depends(require_local_write)])
+def save_reusable_prompt(
+    request: ClaudePromptUpsert,
+    service: ResearchService = Depends(research_service),
+) -> dict:
+    try:
+        prompt = service.save_prompt(request.id, request.name, request.prompt_text)
+        return {"status": "ok", "prompt": prompt}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/research/packs/preview")
+def preview_research_pack(
+    request: ReviewPackRequest,
+    service: ResearchService = Depends(research_service),
+) -> dict:
+    try:
+        pack = service.generate_pack(**request.model_dump(), save=False)
+        return {"status": "ok", "pack": pack}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/research/packs/export", dependencies=[Depends(require_local_write)])
+def export_research_pack(
+    request: ReviewPackRequest,
+    service: ResearchService = Depends(research_service),
+) -> dict:
+    try:
+        pack = service.generate_pack(**request.model_dump(), save=True)
+        return {"status": "ok", "pack": pack}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/research/reviews")
+def saved_ai_reviews(service: ResearchService = Depends(research_service)) -> dict:
+    return {"status": "ok", "reviews": service.reviews()}
+
+
+@app.post("/api/research/reviews", dependencies=[Depends(require_local_write)])
+def import_ai_review(
+    request: AIReviewCreate,
+    service: ResearchService = Depends(research_service),
+) -> dict:
+    try:
+        review = service.save_ai_review(
+            request.instrument_id, request.model_dump(mode="json", exclude={"instrument_id"})
+        )
+        return {"status": "ok", "review": review}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.put(

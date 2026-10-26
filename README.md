@@ -1,8 +1,9 @@
-# Portfolio Manager
+# Investment Tracker
 
-A standalone, local-first, read-only portfolio dashboard for a Canadian retail
-investor. Wealthsimple holdings are synchronized through SnapTrade's Connection
-Portal and must be reviewed before they become a new immutable local snapshot.
+A standalone, local-first research, portfolio-monitoring, and decision-journal
+application for a Canadian retail investor. Wealthsimple holdings and completed
+activities are synchronized through SnapTrade's Connection Portal and must be
+reviewed before they become immutable local history.
 
 The SnapTrade adapter is disabled by default. Development and tests use synthetic
 responses only. The application has no order, trading, or brokerage-credential UI.
@@ -16,7 +17,8 @@ responses only. The application has no order, trading, or brokerage-credential U
   brokerages, and a Wealthsimple connection reported as anything other than `read`
   is rejected before accounts or holdings are requested.
 - The outbound client has an exact, deny-by-default endpoint allowlist for portal
-  creation, connection status, accounts, positions, balances, and disconnection.
+  creation, connection status, accounts, positions, balances, completed account
+  activities, and disconnection.
 - No order placement, modification, cancellation, order-history, trading routes,
   or trading UI.
 - Wealthsimple credentials and MFA are entered only in SnapTrade's hosted portal.
@@ -36,7 +38,9 @@ See [SnapTrade security design and audit](docs/SNAPTRADE_SECURITY.md).
    attempts. It reports connection status, last successful sync, holdings `as_of`,
    disabled connections, and stale data.
 3. The preview lists additions, removals, quantity changes, cost-basis changes,
-   cash changes, and unresolved symbols. Ambiguous exchanges are not guessed.
+   cash changes, unresolved symbols, and a completed-activity summary. Ambiguous
+   exchanges are not guessed. Activity history is cached/daily data, fetched no
+   more than once every 24 hours, and incomplete coverage stays visible.
 4. Nothing changes until the review checkbox is selected and **Apply snapshot** is
    clicked. Accepted data becomes a new immutable `snaptrade_read_sync` snapshot.
 5. SnapTrade position prices are ignored. Market quotes are retrieved separately,
@@ -54,6 +58,29 @@ with a declared interval between 30 and 60 seconds.
 
 Legacy CSV snapshots remain readable after the non-destructive database migration,
 but CSV upload routes and the CSV import UI are inactive.
+
+## Interface
+
+The fixed dark interface is organized into eight client-side tabs:
+
+- **Dashboard** shows sourced portfolio totals, data warnings, exposure coverage,
+  and largest holdings. Unsupported return and income figures remain unavailable.
+- **Holdings** is an Excel-style worksheet with saved column preferences, editable
+  stock sectors and decisions, and local-snapshot row deletion.
+- **Analytics** covers deterministic diversification plus explicit missing states
+  for adjusted-return performance, historical risk, economic currency exposure,
+  and issuer-verified ETF look-through.
+- **Income** and **Activity** use normalized completed brokerage activities and
+  preserve freshness, currency, and incomplete-history warnings.
+- **Decisions** keeps the investor's decision, thesis, conviction, and review
+  triggers separate from any non-binding Claude suggestion.
+- **Research** exports a privacy-controlled Markdown review pack and imports a
+  Claude response manually. It never calls Claude.
+- **Settings** shows connection and synchronization status, quote capabilities,
+  immutable history, local prompts, and separate disconnect/data-deletion controls.
+
+No page contains an order or trade action. Historical analytics are descriptive,
+not forecasts, and missing evidence is never replaced with a fabricated value.
 
 ## Sector allocation
 

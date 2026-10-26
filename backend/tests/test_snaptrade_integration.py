@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
+import app.services.snaptrade as snaptrade_module
 import httpx
 import pytest
 from app.database import Database
@@ -52,6 +53,11 @@ def test_personal_client_signs_only_allowlisted_read_operations() -> None:
             return httpx.Response(200, json={"results": []})
         if request.url.path.endswith("/balances"):
             return httpx.Response(200, json=[])
+        if request.url.path.endswith("/activities"):
+            return httpx.Response(
+                200,
+                json={"data": [], "pagination": {"offset": 0, "limit": 1000, "total": 0}},
+            )
         if request.url.path.endswith(f"/connection/{CONNECTION_ID}"):
             return httpx.Response(200, json={"detail": "queued"})
         raise AssertionError(f"Unexpected synthetic request path: {request.url.path}")
@@ -66,6 +72,7 @@ def test_personal_client_signs_only_allowlisted_read_operations() -> None:
     client.list_accounts()
     client.list_positions(ACCOUNT_ID)
     client.list_balances(ACCOUNT_ID)
+    client.list_activities(ACCOUNT_ID, start_date="2026-01-01", end_date="2026-09-10")
     client.disconnect(CONNECTION_ID)
 
     assert {request.method for request in requests} == {"GET", "POST", "DELETE"}
@@ -90,6 +97,40 @@ def test_personal_client_signs_only_allowlisted_read_operations() -> None:
         "SYNTHETIC_CONSUMER_KEY",
     )
     assert portal_request.headers["Signature"] == expected_signature
+    activity_request = next(
+        request for request in requests if request.url.path.endswith("/activities")
+    )
+    activity_query = parse_qs(activity_request.url.query.decode())
+    assert activity_query["startDate"] == ["2026-01-01"]
+    assert activity_query["endDate"] == ["2026-09-10"]
+    assert activity_query["offset"] == ["0"]
+    assert activity_query["limit"] == ["1000"]
+
+
+def test_activity_parameters_are_rejected_before_transport() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"data": [], "pagination": {}})
+
+    client = ReadOnlySnapTradeClient(
+        SyntheticCredentials(), client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    invalid_calls = [
+        lambda: client.list_activities("not-a-uuid"),
+        lambda: client.list_activities(ACCOUNT_ID, start_date="09/01/2026"),
+        lambda: client.list_activities(
+            ACCOUNT_ID, start_date="2026-09-11", end_date="2026-09-10"
+        ),
+        lambda: client.list_activities(ACCOUNT_ID, offset=-1),
+        lambda: client.list_activities(ACCOUNT_ID, limit=1_001),
+    ]
+    for call in invalid_calls:
+        with pytest.raises(SnapTradeEndpointRejected):
+            call()
+    assert calls == 0
 
 
 def test_deny_by_default_transport_blocks_every_non_allowlisted_endpoint() -> None:
@@ -106,8 +147,11 @@ def test_deny_by_default_transport_blocks_every_non_allowlisted_endpoint() -> No
     blocked = [
         ("POST", "/trade/place"),
         ("POST", f"/accounts/{ACCOUNT_ID}/orders/cancel"),
+        ("POST", f"/accounts/{ACCOUNT_ID}/orders/preview"),
+        ("DELETE", f"/accounts/{ACCOUNT_ID}/orders/33333333-3333-4333-8333-333333333333"),
         ("PATCH", f"/accounts/{ACCOUNT_ID}"),
         ("GET", f"/accounts/{ACCOUNT_ID}/orders"),
+        ("GET", f"/accounts/{ACCOUNT_ID}/quotes"),
     ]
     for method, path in blocked:
         with pytest.raises(SnapTradeEndpointRejected):
@@ -125,6 +169,7 @@ def test_client_exposes_only_read_data_and_connection_operations() -> None:
         "create_connection_portal",
         "disconnect",
         "list_accounts",
+        "list_activities",
         "list_balances",
         "list_connections",
         "list_positions",
@@ -251,6 +296,100 @@ def test_non_read_only_connection_is_rejected_before_account_access(tmp_path: Pa
         service.preview_sync()
     assert fixture.account_calls == 0
     assert service.status()["connection_status"] == "rejected_trade_enabled"
+
+
+class PagedActivityFixture:
+    def __init__(self) -> None:
+        self.offsets: list[int] = []
+
+    def create_connection_portal(self, redirect_uri: str) -> str:
+        raise AssertionError(redirect_uri)
+
+    def list_connections(self) -> list[dict[str, Any]]:
+        return [{
+            "id": CONNECTION_ID,
+            "type": "read",
+            "disabled": False,
+            "brokerage": {"slug": "WEALTHSIMPLE"},
+        }]
+
+    def list_accounts(self) -> list[dict[str, Any]]:
+        return [{
+            "id": ACCOUNT_ID,
+            "brokerage_authorization": CONNECTION_ID,
+            "name": "Synthetic TFSA",
+            "raw_type": "TFSA",
+            "sync_status": {
+                "holdings": {"last_successful_sync": "2026-09-10T14:00:00Z"},
+                "activities": {"last_successful_sync": "2026-09-10T14:00:00Z"},
+            },
+        }]
+
+    def list_positions(self, account_id: str) -> dict[str, Any]:
+        assert account_id == ACCOUNT_ID
+        return {
+            "data_freshness": {"as_of": "2026-09-10T14:00:00Z"},
+            "results": [],
+        }
+
+    def list_balances(self, account_id: str) -> list[dict[str, Any]]:
+        assert account_id == ACCOUNT_ID
+        return []
+
+    def list_activities(
+        self,
+        account_id: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        offset: int = 0,
+        limit: int = 1_000,
+    ) -> dict[str, Any]:
+        assert account_id == ACCOUNT_ID
+        assert start_date is None and end_date is None
+        assert limit == 1
+        self.offsets.append(offset)
+        return {
+            "data": [{
+                "id": "SYNTHETIC-DUPLICATE",
+                "type": "DIVIDEND",
+                "symbol": {"symbol": "RY.TO"},
+                "trade_date": "2026-06-30T00:00:00Z",
+                "amount": "1",
+                "currency": {"code": "CAD"},
+            }],
+            "pagination": {"offset": offset, "limit": limit, "total": 3},
+        }
+
+    def disconnect(self, connection_id: str) -> None:
+        raise AssertionError(connection_id)
+
+
+def test_activity_pagination_is_bounded_deduplicated_and_reports_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(snaptrade_module, "ACTIVITY_PAGE_SIZE", 1)
+    monkeypatch.setattr(snaptrade_module, "MAX_ACTIVITY_PAGES", 2)
+    repository = PortfolioRepository(Database(tmp_path / "paged.sqlite3"))
+    portfolio = PortfolioService(repository, price_provider=NoPrices(), fx_provider=NoFx())
+    fixture = PagedActivityFixture()
+    service = SnapTradeSyncService(
+        repository,
+        portfolio,
+        fixture,
+        enabled=True,
+        redirect_uri="http://127.0.0.1:5173/?snaptrade=connected",
+        local_secret_path=tmp_path / "alias.key",
+        clock=lambda: datetime(2026, 9, 10, 15, tzinfo=UTC),
+    )
+
+    preview = service.preview_sync()
+
+    assert fixture.offsets == [0, 1]
+    assert preview["activity_summary"]["additions"] == 1
+    assert preview["activity_summary"]["incomplete_initial_sync"] is True
+    assert any(issue["code"] == "DUPLICATE_ACTIVITY" for issue in preview["issues"])
+    assert any(issue["code"] == "INCOMPLETE_ACTIVITY_HISTORY" for issue in preview["issues"])
 
 
 def test_application_has_no_order_or_trading_api_routes() -> None:

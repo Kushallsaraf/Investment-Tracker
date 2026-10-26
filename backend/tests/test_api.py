@@ -5,10 +5,24 @@ from pathlib import Path
 from typing import Any
 
 from app.database import Database
-from app.main import app, portfolio_service, sector_service, snaptrade_service
+from app.journal_repository import JournalRepository
+from app.main import (
+    activity_service,
+    analytics_service,
+    app,
+    journal_service,
+    portfolio_service,
+    research_service,
+    sector_service,
+    snaptrade_service,
+)
 from app.repository import PortfolioRepository
+from app.services.activities import ActivityService
+from app.services.analytics import AnalyticsService
 from app.services.imports import ImportService
+from app.services.journal import JournalService
 from app.services.portfolio import PortfolioService
+from app.services.research import ResearchService
 from app.services.sectors import SectorService
 from app.services.snaptrade import SnapTradeSyncService
 from fastapi.testclient import TestClient
@@ -74,7 +88,8 @@ class SyntheticSnapTrade:
                     "holdings": {
                         "last_successful_sync": AS_OF,
                         "holdings_unavailable": False,
-                    }
+                    },
+                    "activities": {"last_successful_sync": AS_OF},
                 },
             }
         ]
@@ -104,6 +119,39 @@ class SyntheticSnapTrade:
         assert account_id == ACCOUNT_ID
         return [{"currency": {"code": "CAD"}, "cash": "25"}]
 
+    def list_activities(
+        self,
+        account_id: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        offset: int = 0,
+        limit: int = 1_000,
+    ) -> dict[str, Any]:
+        assert account_id == ACCOUNT_ID
+        assert start_date is None and end_date is None
+        assert offset == 0 and limit == 1_000
+        return {
+            "data": [
+                {
+                    "id": "SENSITIVE-EXTERNAL-ACTIVITY-ID",
+                    "type": "DIVIDEND",
+                    "symbol": {
+                        "symbol": "XIC",
+                        "exchange": {"suffix": ".TO"},
+                    },
+                    "trade_date": "2026-06-30T00:00:00Z",
+                    "settlement_date": "2026-07-02T00:00:00Z",
+                    "units": None,
+                    "price": None,
+                    "fee": "0",
+                    "amount": "7.44",
+                    "currency": {"code": "CAD"},
+                }
+            ],
+            "pagination": {"offset": 0, "limit": 1_000, "total": 1},
+        }
+
     def disconnect(self, connection_id: str) -> None:
         self.disconnected.append(connection_id)
 
@@ -114,6 +162,8 @@ def _client(
     repository = PortfolioRepository(Database(tmp_path / "api.sqlite3"))
     portfolio = PortfolioService(repository, price_provider=OnePrice(), fx_provider=UnusedFx())
     synthetic = SyntheticSnapTrade()
+    sectors = SectorService(repository)
+    journal_repository = JournalRepository(repository.database)
     snaptrade = SnapTradeSyncService(
         repository,
         portfolio,
@@ -124,8 +174,16 @@ def _client(
         clock=lambda: FIXED_NOW,
     )
     app.dependency_overrides[portfolio_service] = lambda: portfolio
-    app.dependency_overrides[sector_service] = lambda: SectorService(repository)
+    app.dependency_overrides[sector_service] = lambda: sectors
     app.dependency_overrides[snaptrade_service] = lambda: snaptrade
+    app.dependency_overrides[activity_service] = lambda: ActivityService(repository)
+    app.dependency_overrides[analytics_service] = lambda: AnalyticsService(repository, sectors)
+    app.dependency_overrides[journal_service] = lambda: JournalService(
+        journal_repository, repository
+    )
+    app.dependency_overrides[research_service] = lambda: ResearchService(
+        journal_repository, repository, sectors
+    )
     return TestClient(app), repository, portfolio, synthetic
 
 
@@ -195,6 +253,9 @@ def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -
     assert len(preview["changes"]["cost_basis_changes"]) == 1
     assert len(preview["changes"]["cash_changes"]) == 1
     assert preview["can_apply"] is True
+    assert preview["activity_summary"]["additions"] == 1
+    assert preview["activity_summary"]["type_counts"] == {"DISTRIBUTION": 1}
+    assert preview["activity_summary"]["incomplete_initial_sync"] is False
     xic = next(row for row in preview["positions"] if row["canonical_symbol"] == "XIC.TO")
     assert xic["asset_type"] == "ETF"
     assert any(
@@ -203,6 +264,7 @@ def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -
     )
     assert ACCOUNT_ID not in preview_response.text
     assert "SENSITIVE-ACCOUNT-NUMBER" not in preview_response.text
+    assert "SENSITIVE-EXTERNAL-ACTIVITY-ID" not in preview_response.text
 
     recovered_preview = client.get("/api/snaptrade/sync/pending")
     assert recovered_preview.status_code == 200
@@ -231,6 +293,24 @@ def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -
     }
     assert dashboard["holdings"][0]["price_source"] in {"Synthetic quote", "Currency face value"}
     assert len(client.get("/api/portfolio/history").json()["history"]) == 2
+    activities = client.get("/api/activity").json()
+    assert activities["activities"][0]["normalized_type"] == "DISTRIBUTION"
+    assert activities["activities"][0]["symbol"] == "XIC.TO"
+
+    xic_position = next(
+        row["position_id"] for row in dashboard["holdings"] if row["canonical_symbol"] == "XIC.TO"
+    )
+    local_removal = client.delete(
+        f"/api/portfolio/positions/{xic_position}",
+        headers={"X-Portfolio-Manager": "local-ui"},
+    )
+    assert local_removal.status_code == 200
+    assert len(client.get("/api/portfolio/history").json()["history"]) == 3
+    with repository.database.connect() as connection:
+        derived = connection.execute(
+            "SELECT data_origin FROM holding_snapshots WHERE source_type = 'manual_row_removal'"
+        ).fetchone()
+    assert derived["data_origin"] == "snaptrade"
 
     second_preview = client.post(
         "/api/snaptrade/sync/preview", headers={"X-Portfolio-Manager": "local-ui"}
@@ -273,7 +353,7 @@ def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -
         json={"confirm": "DELETE"},
     )
     assert rejected_deletion.status_code == 422
-    assert len(client.get("/api/portfolio/history").json()["history"]) == 2
+    assert len(client.get("/api/portfolio/history").json()["history"]) == 3
 
     deleted = client.request(
         "DELETE",
@@ -282,13 +362,20 @@ def test_snaptrade_preview_apply_disconnect_and_local_deletion(tmp_path: Path) -
         json={"confirm": "DELETE LOCAL DATA"},
     )
     assert deleted.status_code == 200
-    assert deleted.json()["snapshots"] == 1
+    assert deleted.json()["snapshots"] == 2
     restored = client.get("/api/portfolio").json()["portfolio"]
     assert restored["holding_snapshot_id"] == legacy_snapshot_id
     assert restored["total_cad"] == "371.25"
+    with repository.database.connect() as connection:
+        preserved_symbols = {
+            row["canonical_symbol"]
+            for row in connection.execute("SELECT canonical_symbol FROM instruments")
+        }
+    assert "CASH-CAD" in preserved_symbols
 
     raw_database = repository.database.path.read_bytes().decode("latin-1", errors="ignore")
     assert ACCOUNT_ID not in raw_database
     assert CONNECTION_ID not in raw_database
     assert "SENSITIVE-ACCOUNT-NUMBER" not in raw_database
+    assert "SENSITIVE-EXTERNAL-ACTIVITY-ID" not in raw_database
     app.dependency_overrides.clear()

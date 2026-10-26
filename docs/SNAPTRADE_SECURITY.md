@@ -1,13 +1,13 @@
 # SnapTrade read-only security design and audit
 
-Audit date: 2026-09-10
+Audit date: 2026-09-11
 
 Status: **PASS for synthetic development.** The adapter remains disabled by
 default and no real SnapTrade or Wealthsimple connection was made during the audit.
 
 ## Security design
 
-Portfolio Manager uses SnapTrade's Personal API Key model. Signed requests contain
+Investment Tracker uses SnapTrade's Personal API Key model. Signed requests contain
 the Personal client ID, timestamp, and signature, and deliberately omit commercial
 `userId` and `userSecret` parameters. The Connection Portal payload always requests
 `connectionType: "read"`. It deliberately omits the optional broker filter because
@@ -26,6 +26,7 @@ SDK. Its transport rejects every method/path pair except this exact allowlist:
 | `GET` | `/accounts` | List accounts after permission validation |
 | `GET` | `/accounts/{uuid}/positions/all` | Read positions |
 | `GET` | `/accounts/{uuid}/balances` | Read currency balances |
+| `GET` | `/accounts/{uuid}/activities` | Read completed activities (daily/cached) |
 | `DELETE` | `/connection/{uuid}` | Disconnect the brokerage |
 
 No wildcard suffixes or arbitrary request helper is exposed as a public operation.
@@ -56,6 +57,12 @@ credential. It exists only to HMAC account UUIDs into stable local aliases.
 - At most one synchronization attempt is allowed every ten minutes.
 - Every synchronization creates a local preview first. Applying requires an exact
   confirmation token and creates an immutable snapshot.
+- Completed activities use UUID-only account paths, ISO date filters, a maximum
+  page size of 1,000, and bounded pagination. They are fetched no more than once
+  every 24 hours. The preview reports additions, changed normalized records, type
+  counts, missing symbols, unsupported types, date coverage, and incomplete history.
+- Only normalized activity fields are retained. External identifiers are HMAC-hashed
+  for local deduplication; raw account IDs and raw payloads are not stored.
 - SnapTrade-supplied market prices are discarded. The independent market-price
   provider supplies dated quotes used for local valuation.
 - Disconnect is explicit and confirmed. Local brokerage-data deletion is a separate,
@@ -69,17 +76,22 @@ The automated suite verifies:
 - every allowed path is signed and contains no consumer key;
 - representative trade, order, cancellation, mutation, and unknown paths are
   rejected before the network transport is reached;
+- completed activities are the only added account-data endpoint; their parameters,
+  pagination, normalization, deduplication, and incomplete coverage are tested;
 - a trade-enabled connection is rejected before accounts are read;
 - the application exposes no order or trading API route;
 - synchronization cannot be applied without explicit confirmation;
 - raw account and connection IDs do not appear in API previews or SQLite;
-- schema migration preserves existing holdings and passes foreign-key checks;
-- deleting local SnapTrade data preserves a legacy snapshot;
+- non-destructive schema migrations preserve existing holdings byte-for-byte and
+  pass foreign-key checks;
+- deleting local SnapTrade data follows derived snapshot lineage, preserves legacy
+  snapshots, and does not delete independent quote or instrument evidence;
 - the dashboard never auto-applies an app-open synchronization preview.
 
 Static inspection also confirms that there is no order model, order client method,
-brokerage trade route, or trading UI in the application. Tests use only synthetic
-responses and an in-memory HTTP transport.
+brokerage trade route, or trading UI in the application. The eight application tabs
+display `No order actions available` where brokerage activity is shown. Tests use
+only synthetic responses and an in-memory HTTP transport.
 
 ## Manual Keychain setup (only after this audit passes)
 
@@ -102,7 +114,7 @@ either value to Codex and do not paste either value into Terminal.
 
 7. Click **Connect**, then select Wealthsimple in SnapTrade's portal. Enter
    Wealthsimple credentials and MFA only in that HTTPS SnapTrade portal. Return to
-   Portfolio Manager, inspect the preview, and apply it only if every change is
+   Investment Tracker, inspect the preview, and apply it only if every change is
    correct.
 
 macOS may ask whether the local Python process may access those Keychain items. Read
@@ -115,5 +127,6 @@ the prompt carefully and allow access only while using this local application.
 - [Connection status and permission](https://docs.snaptrade.com/reference/Connections/Connections_listBrokerageAuthorizations)
 - [Account positions](https://docs.snaptrade.com/reference/Account%20Information/AccountInformation_getAllAccountPositions)
 - [Account balances](https://docs.snaptrade.com/reference/Account%20Information/AccountInformation_getUserAccountBalance)
+- [Completed account activities](https://docs.snaptrade.com/reference/Account%20Information/AccountInformation_getAccountActivities)
 - [Request signatures](https://docs.snaptrade.com/docs/request-signatures)
 - [Disconnect semantics](https://docs.snaptrade.com/reference/Connections/Connections_deleteConnection)

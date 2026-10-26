@@ -17,9 +17,13 @@ from app.integrations.snaptrade import (
     SnapTradeReadClient,
 )
 from app.repository import PortfolioRepository
+from app.services.activities import normalize_snaptrade_activity, summarize_activity_preview
 from app.services.portfolio import PortfolioService
 
 SYNC_PREVIEW_STALE_AFTER = timedelta(hours=36)
+ACTIVITY_REFRESH_AFTER = timedelta(hours=24)
+ACTIVITY_PAGE_SIZE = 1_000
+MAX_ACTIVITY_PAGES = 5
 SUPPORTED_ACCOUNT_TYPES = ("TFSA", "RRSP", "FHSA", "RESP", "LIRA", "RRIF")
 CANADIAN_EXCHANGES = {
     "TSX": ("TSX", ".TO"),
@@ -580,6 +584,15 @@ class SnapTradeSyncService:
     @staticmethod
     def _public_preview(preview: dict[str, Any]) -> dict[str, Any]:
         issues = preview["issues"]
+        activity_summary = dict(preview.get("activity_summary") or {})
+        activity_summary["accounts"] = [
+            {
+                key: value
+                for key, value in account.items()
+                if key != "account_fingerprint"
+            }
+            for account in activity_summary.get("accounts", [])
+        ]
         return {
             "preview_id": preview["id"],
             "created_at": preview["created_at"],
@@ -592,6 +605,20 @@ class SnapTradeSyncService:
             ],
             "changes": preview["changes"],
             "issues": issues,
+            "activity_preview": [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key
+                    not in {
+                        "activity_key",
+                        "record_hash",
+                        "account_fingerprint",
+                    }
+                }
+                for row in (preview.get("activities") or [])[:100]
+            ],
+            "activity_summary": activity_summary,
             "error_count": sum(issue["severity"] == "error" for issue in issues),
             "warning_count": sum(issue["severity"] == "warning" for issue in issues),
             "can_apply": not any(issue["severity"] == "error" for issue in issues),
@@ -676,6 +703,10 @@ class SnapTradeSyncService:
         holdings_times: list[str] = []
         successful_sync_times: list[str] = []
         seen: set[tuple[str, str]] = set()
+        activities_by_key: dict[str, dict[str, Any]] = {}
+        activity_accounts: list[dict[str, Any]] = []
+        unsupported_activity_types: set[str] = set()
+        activity_incomplete = False
 
         for account in accounts:
             account_id = str(account.get("id") or "")
@@ -783,6 +814,140 @@ class SnapTradeSyncService:
                     }
                 )
 
+            prior_coverage = self.repository.activity_coverage_for(fingerprint)
+            last_activity_sync = _datetime((prior_coverage or {}).get("last_synced_at"))
+            if last_activity_sync and self.clock() < last_activity_sync + ACTIVITY_REFRESH_AFTER:
+                issues.append(
+                    _issue(
+                        "warning",
+                        "ACTIVITIES_CACHED",
+                        f"{alias} activities were not requested again because SnapTrade "
+                        "activities are daily/cached and were synchronized within 24 hours.",
+                    )
+                )
+                activity_accounts.append(
+                    {
+                        "account_fingerprint": fingerprint,
+                        "account_alias": alias,
+                        "coverage_start": prior_coverage.get("coverage_start"),
+                        "coverage_end": prior_coverage.get("coverage_end"),
+                        "complete_initial_sync": bool(prior_coverage.get("complete_initial_sync")),
+                        "source_as_of": prior_coverage.get("source_as_of"),
+                        "warning": prior_coverage.get("warning"),
+                    }
+                )
+                if not bool(prior_coverage.get("complete_initial_sync")):
+                    activity_incomplete = True
+                continue
+
+            activity_status = (
+                (account.get("sync_status") or {}).get("transactions")
+                or (account.get("sync_status") or {}).get("activities")
+                or {}
+            )
+            activity_as_of = str(
+                activity_status.get("last_successful_sync")
+                or activity_status.get("as_of")
+                or ""
+            ).strip() or None
+            offset = 0
+            account_rows: list[dict[str, Any]] = []
+            account_complete = False
+            account_read_failed = False
+            for _page in range(MAX_ACTIVITY_PAGES):
+                try:
+                    activity_payload = self.client.list_activities(
+                        account_id,
+                        offset=offset,
+                        limit=ACTIVITY_PAGE_SIZE,
+                    )
+                except SnapTradeError as exc:
+                    issues.append(
+                        _issue(
+                            "warning",
+                            "ACTIVITY_READ_FAILED",
+                            f"{alias} completed activities were not retrieved: {exc}",
+                        )
+                    )
+                    activity_incomplete = True
+                    account_read_failed = True
+                    break
+                page_rows = activity_payload.get("data") or []
+                pagination = activity_payload.get("pagination") or {}
+                for activity in page_rows:
+                    raw_type = str(activity.get("type") or "").strip().upper()
+                    normalized, normalization_warnings = normalize_snaptrade_activity(
+                        activity,
+                        account_fingerprint=fingerprint,
+                        local_secret=local_secret,
+                        source_as_of=activity_as_of,
+                    )
+                    if normalized["normalized_type"] == "OTHER":
+                        unsupported_activity_types.add(raw_type or "MISSING")
+                    for warning in normalization_warnings:
+                        issues.append(
+                            _issue(
+                                "warning",
+                                warning["code"],
+                                f"{alias}: {warning['message']}",
+                                symbol=normalized.get("symbol"),
+                            )
+                        )
+                    key = normalized["activity_key"]
+                    if key in activities_by_key:
+                        issues.append(
+                            _issue(
+                                "warning",
+                                "DUPLICATE_ACTIVITY",
+                                f"{alias} returned a duplicate completed activity; it was deduplicated.",
+                                symbol=normalized.get("symbol"),
+                            )
+                        )
+                        continue
+                    activities_by_key[key] = normalized
+                    account_rows.append(normalized)
+                try:
+                    total = int(pagination.get("total"))
+                except (TypeError, ValueError):
+                    total = offset + len(page_rows)
+                next_offset = offset + len(page_rows)
+                if not page_rows or next_offset >= total:
+                    account_complete = True
+                    break
+                offset = next_offset
+            if not account_complete:
+                activity_incomplete = True
+                issues.append(
+                    _issue(
+                        "warning",
+                        "INCOMPLETE_ACTIVITY_HISTORY",
+                        (
+                            f"{alias} activity history was not fully retrieved."
+                            if account_read_failed
+                            else f"{alias} activity history exceeded the bounded "
+                            f"{MAX_ACTIVITY_PAGES}-page fetch."
+                        ),
+                    )
+                )
+            account_dates = sorted(
+                row["trade_date"] for row in account_rows if row.get("trade_date")
+            )
+            activity_accounts.append(
+                {
+                    "account_fingerprint": fingerprint,
+                    "account_alias": alias,
+                    "coverage_start": account_dates[0] if account_dates else None,
+                    "coverage_end": account_dates[-1] if account_dates else None,
+                    "complete_initial_sync": account_complete,
+                    "source_as_of": activity_as_of,
+                    "warning": (
+                        None
+                        if account_complete
+                        else "Initial completed-activity synchronization may be incomplete."
+                    ),
+                }
+            )
+
         rows.sort(key=lambda row: (row["account_alias"], row["canonical_symbol"]))
         for index, row in enumerate(rows, start=1):
             row["row_number"] = index
@@ -810,10 +975,23 @@ class SnapTradeSyncService:
         rows = reconciled["rows"]
         issues = reconciled["issues"]
         changes = self._changes(self.portfolio.latest(), rows)
+        activities = list(activities_by_key.values())
+        stored_activity_hashes = self.repository.brokerage_activity_hashes(
+            [row["activity_key"] for row in activities]
+        )
+        activity_summary = summarize_activity_preview(
+            activities,
+            stored_activity_hashes,
+            accounts=activity_accounts,
+            unsupported_activity_types=unsupported_activity_types,
+            incomplete=activity_incomplete,
+        )
         preview = self.repository.create_snaptrade_preview(
             rows=rows,
             changes=changes,
             issues=issues,
+            activities=activities,
+            activity_summary=activity_summary,
             holdings_as_of=holdings_as_of,
             last_successful_sync_at=last_successful,
         )

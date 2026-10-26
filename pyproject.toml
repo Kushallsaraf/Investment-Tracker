@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "portfolio-manager"
 version = "0.2.0"
-description = "A local-first, read-only portfolio dashboard for Canadian retail investors."
+description = "A local-first Canadian investment tracker and decision journal."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

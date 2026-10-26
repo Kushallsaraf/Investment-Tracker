@@ -1,14 +1,27 @@
 import type {
+  ActivityPayload,
+  AIReview,
+  Analytics,
+  ClaudePrompt,
+  DecisionName,
   HistoryPoint,
+  IncomePayload,
+  InvestmentProfile,
+  JournalPayload,
   Portfolio,
   PriceCapabilities,
+  ReviewPack,
+  ReviewPrivacy,
   SectorAnalysis,
   SectorName,
   SnapTradeStatus,
   SnapTradeSyncPreview,
 } from "./types";
 
-const WRITE_HEADERS = { "X-Portfolio-Manager": "local-ui" };
+const WRITE_HEADERS = {
+  "Content-Type": "application/json",
+  "X-Portfolio-Manager": "local-ui",
+};
 
 async function responseJson<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => ({}));
@@ -19,123 +32,223 @@ async function responseJson<T>(response: Response): Promise<T> {
 }
 
 export async function getPortfolio(): Promise<Portfolio | null> {
-  const response = await fetch("/api/portfolio");
-  const payload = await responseJson<{ portfolio: Portfolio | null }>(response);
+  const payload = await responseJson<{ portfolio: Portfolio | null }>(await fetch("/api/portfolio"));
   return payload.portfolio;
 }
 
 export async function getHistory(): Promise<HistoryPoint[]> {
-  const response = await fetch("/api/portfolio/history");
-  const payload = await responseJson<{ history: HistoryPoint[] }>(response);
+  const payload = await responseJson<{ history: HistoryPoint[] }>(await fetch("/api/portfolio/history"));
   return payload.history;
 }
 
 export async function getSectorAnalysis(): Promise<SectorAnalysis | null> {
-  const response = await fetch("/api/portfolio/sectors");
-  const payload = await responseJson<{ analysis: SectorAnalysis | null }>(response);
+  const payload = await responseJson<{ analysis: SectorAnalysis | null }>(await fetch("/api/portfolio/sectors"));
   return payload.analysis;
 }
 
+export async function getAnalytics(): Promise<Analytics> {
+  const payload = await responseJson<{ analytics: Analytics }>(await fetch("/api/analytics"));
+  return payload.analytics;
+}
+
+export async function getActivity(params: {
+  activityType?: string;
+  symbol?: string;
+  startDate?: string;
+  endDate?: string;
+} = {}): Promise<ActivityPayload> {
+  const query = new URLSearchParams();
+  if (params.activityType) query.set("activity_type", params.activityType);
+  if (params.symbol) query.set("symbol", params.symbol);
+  if (params.startDate) query.set("start_date", params.startDate);
+  if (params.endDate) query.set("end_date", params.endDate);
+  const suffix = query.size ? `?${query}` : "";
+  return responseJson<ActivityPayload>(await fetch(`/api/activity${suffix}`));
+}
+
+export async function getIncome(): Promise<IncomePayload> {
+  const payload = await responseJson<{ income: IncomePayload }>(await fetch("/api/income"));
+  return payload.income;
+}
+
+export async function getJournal(): Promise<JournalPayload> {
+  const payload = await responseJson<{ journal: JournalPayload }>(await fetch("/api/journal"));
+  return payload.journal;
+}
+
+export async function getPrompts(): Promise<ClaudePrompt[]> {
+  const payload = await responseJson<{ prompts: ClaudePrompt[] }>(await fetch("/api/research/prompts"));
+  return payload.prompts;
+}
+
+export async function getAIReviews(): Promise<AIReview[]> {
+  const payload = await responseJson<{ reviews: AIReview[] }>(await fetch("/api/research/reviews"));
+  return payload.reviews;
+}
+
 export async function getSnapTradeStatus(): Promise<SnapTradeStatus> {
-  const response = await fetch("/api/snaptrade/status");
-  return responseJson<SnapTradeStatus>(response);
+  return responseJson<SnapTradeStatus>(await fetch("/api/snaptrade/status"));
 }
 
 export async function checkSnapTradeConnection(): Promise<SnapTradeStatus> {
-  const response = await fetch("/api/snaptrade/connection/check", {
+  return responseJson<SnapTradeStatus>(await fetch("/api/snaptrade/connection/check", {
     method: "POST",
     headers: WRITE_HEADERS,
-  });
-  return responseJson<SnapTradeStatus>(response);
+  }));
 }
 
 export async function getPriceCapabilities(): Promise<PriceCapabilities> {
-  const response = await fetch("/api/prices/capabilities");
-  return responseJson<PriceCapabilities>(response);
+  return responseJson<PriceCapabilities>(await fetch("/api/prices/capabilities"));
 }
 
 export async function createSnapTradePortal(): Promise<string> {
-  const response = await fetch("/api/snaptrade/portal", {
+  const payload = await responseJson<{ redirect_uri: string }>(await fetch("/api/snaptrade/portal", {
     method: "POST",
     headers: WRITE_HEADERS,
-  });
-  const payload = await responseJson<{ redirect_uri: string }>(response);
+  }));
   return payload.redirect_uri;
 }
 
 export async function previewSnapTradeSync(): Promise<SnapTradeSyncPreview> {
-  const response = await fetch("/api/snaptrade/sync/preview", {
+  return responseJson<SnapTradeSyncPreview>(await fetch("/api/snaptrade/sync/preview", {
     method: "POST",
     headers: WRITE_HEADERS,
-  });
-  return responseJson<SnapTradeSyncPreview>(response);
+  }));
 }
 
 export async function getPendingSnapTradeSync(): Promise<SnapTradeSyncPreview | null> {
-  const response = await fetch("/api/snaptrade/sync/pending");
-  const payload = await responseJson<{ preview: SnapTradeSyncPreview | null }>(response);
+  const payload = await responseJson<{ preview: SnapTradeSyncPreview | null }>(await fetch("/api/snaptrade/sync/pending"));
   return payload.preview;
 }
 
 export async function applySnapTradeSync(previewId: string): Promise<void> {
-  const response = await fetch(`/api/snaptrade/sync/${previewId}/apply`, {
+  await responseJson(await fetch(`/api/snaptrade/sync/${previewId}/apply`, {
     method: "POST",
-    headers: { ...WRITE_HEADERS, "Content-Type": "application/json" },
+    headers: WRITE_HEADERS,
     body: JSON.stringify({ confirm: "APPLY" }),
-  });
-  await responseJson(response);
+  }));
 }
 
 export async function cancelSnapTradeSync(previewId: string): Promise<void> {
-  const response = await fetch(`/api/snaptrade/sync/${previewId}`, {
+  await responseJson(await fetch(`/api/snaptrade/sync/${previewId}`, {
     method: "DELETE",
     headers: WRITE_HEADERS,
-  });
-  await responseJson(response);
+  }));
 }
 
 export async function disconnectSnapTrade(): Promise<void> {
-  const response = await fetch("/api/snaptrade/disconnect", {
+  await responseJson(await fetch("/api/snaptrade/disconnect", {
     method: "POST",
-    headers: { ...WRITE_HEADERS, "Content-Type": "application/json" },
+    headers: WRITE_HEADERS,
     body: JSON.stringify({ confirm: "DISCONNECT" }),
-  });
-  await responseJson(response);
+  }));
 }
 
 export async function deleteLocalBrokerageData(): Promise<void> {
-  const response = await fetch("/api/snaptrade/local-data", {
+  await responseJson(await fetch("/api/snaptrade/local-data", {
     method: "DELETE",
-    headers: { ...WRITE_HEADERS, "Content-Type": "application/json" },
+    headers: WRITE_HEADERS,
     body: JSON.stringify({ confirm: "DELETE LOCAL DATA" }),
-  });
-  await responseJson(response);
+  }));
 }
 
 export async function refreshPrices(): Promise<void> {
-  const response = await fetch("/api/portfolio/refresh", {
+  await responseJson(await fetch("/api/portfolio/refresh", {
     method: "POST",
     headers: WRITE_HEADERS,
-  });
-  await responseJson(response);
+  }));
 }
 
 export async function removePortfolioPosition(positionId: string): Promise<void> {
-  const response = await fetch(`/api/portfolio/positions/${positionId}`, {
+  await responseJson(await fetch(`/api/portfolio/positions/${positionId}`, {
     method: "DELETE",
     headers: WRITE_HEADERS,
-  });
-  await responseJson(response);
+  }));
 }
 
-export async function updateInstrumentSector(
-  instrumentId: string,
-  sector: SectorName | null,
-): Promise<void> {
-  const response = await fetch(`/api/instruments/${instrumentId}/sector`, {
+export async function updateInstrumentSector(instrumentId: string, sector: SectorName | null): Promise<void> {
+  await responseJson(await fetch(`/api/instruments/${instrumentId}/sector`, {
     method: "PUT",
-    headers: { ...WRITE_HEADERS, "Content-Type": "application/json" },
+    headers: WRITE_HEADERS,
     body: JSON.stringify({ sector }),
-  });
-  await responseJson(response);
+  }));
+}
+
+export async function updateDecision(
+  instrumentId: string,
+  decision: DecisionName,
+  reason = "",
+  claudeDisposition: "ACCEPTED" | "REJECTED" | "CONSIDERING" | null = null,
+  reviewDueDate: string | null = null,
+): Promise<void> {
+  await responseJson(await fetch(`/api/journal/instruments/${instrumentId}/decisions`, {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify({
+      decision,
+      decision_date: new Date().toISOString().slice(0, 10),
+      reason,
+      claude_disposition: claudeDisposition,
+      review_due_date: reviewDueDate,
+    }),
+  }));
+}
+
+export async function updateInvestmentProfile(
+  instrumentId: string,
+  profile: Partial<Omit<InvestmentProfile, "instrument_id" | "symbol" | "updated_at">>,
+): Promise<void> {
+  await responseJson(await fetch(`/api/journal/instruments/${instrumentId}/profile`, {
+    method: "PUT",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify(profile),
+  }));
+}
+
+export async function createReviewTrigger(instrumentId: string, trigger: Record<string, unknown>): Promise<void> {
+  await responseJson(await fetch(`/api/journal/instruments/${instrumentId}/triggers`, {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify(trigger),
+  }));
+}
+
+export async function savePrompt(prompt: { id?: string; name: string; prompt_text: string }): Promise<ClaudePrompt> {
+  const payload = await responseJson<{ prompt: ClaudePrompt }>(await fetch("/api/research/prompts", {
+    method: "PUT",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify(prompt),
+  }));
+  return payload.prompt;
+}
+
+export async function generateReviewPack(
+  instrumentId: string,
+  promptId: string,
+  triggerId: string | null,
+  privacy: ReviewPrivacy,
+  save: boolean,
+): Promise<ReviewPack> {
+  const payload = await responseJson<{ pack: ReviewPack }>(await fetch(
+    `/api/research/packs/${save ? "export" : "preview"}`,
+    {
+      method: "POST",
+      headers: WRITE_HEADERS,
+      body: JSON.stringify({
+        instrument_id: instrumentId,
+        prompt_id: promptId,
+        trigger_id: triggerId,
+        privacy,
+      }),
+    },
+  ));
+  return payload.pack;
+}
+
+export async function importAIReview(review: Record<string, unknown>): Promise<void> {
+  await responseJson(await fetch("/api/research/reviews", {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify(review),
+  }));
 }

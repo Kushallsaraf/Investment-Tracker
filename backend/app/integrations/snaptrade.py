@@ -1,8 +1,8 @@
 """Strictly allowlisted, read-only access to SnapTrade Personal.
 
 This module intentionally does not depend on SnapTrade's general-purpose SDK.
-Only connection setup/status, accounts, positions, balances, and disconnection
-exist in this client. Secrets are read from macOS Keychain and are never
+Only connection setup/status, accounts, positions, balances, completed account
+activities, and disconnection exist in this client. Secrets are read from macOS Keychain and are never
 accepted from an API request or persisted by Portfolio Manager.
 """
 
@@ -17,6 +17,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Protocol
 from urllib.parse import urlencode, urlsplit
 
@@ -28,12 +29,14 @@ CONSUMER_KEY_ACCOUNT = "consumer-key"
 SNAPTRADE_API_ROOT = "https://api.snaptrade.com"
 
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+_UUID_VALUE = re.compile(rf"^{_UUID}$")
 _ALLOWED_ENDPOINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("POST", re.compile(r"^/snapTrade/login$")),
     ("GET", re.compile(r"^/authorizations$")),
     ("GET", re.compile(r"^/accounts$")),
     ("GET", re.compile(rf"^/accounts/{_UUID}/positions/all$")),
     ("GET", re.compile(rf"^/accounts/{_UUID}/balances$")),
+    ("GET", re.compile(rf"^/accounts/{_UUID}/activities$")),
     ("DELETE", re.compile(rf"^/connection/{_UUID}$")),
 )
 
@@ -75,6 +78,16 @@ class SnapTradeReadClient(Protocol):
     def list_positions(self, account_id: str) -> dict[str, Any]: ...
 
     def list_balances(self, account_id: str) -> list[dict[str, Any]]: ...
+
+    def list_activities(
+        self,
+        account_id: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        offset: int = 0,
+        limit: int = 1_000,
+    ) -> dict[str, Any]: ...
 
     def disconnect(self, connection_id: str) -> None: ...
 
@@ -187,13 +200,17 @@ class ReadOnlySnapTradeClient:
         path: str,
         *,
         body: dict[str, Any] | None = None,
+        query_params: list[tuple[str, str]] | None = None,
         operation: str,
     ) -> Any:
         self._assert_allowed(method, path)
         credentials = self._credentials.load()
-        query = urlencode(
-            [("clientId", credentials.client_id), ("timestamp", str(int(self._clock())))]
-        )
+        parameters = [
+            ("clientId", credentials.client_id),
+            ("timestamp", str(int(self._clock()))),
+        ]
+        parameters.extend(query_params or [])
+        query = urlencode(parameters)
         signature = self._signature(path, query, body, credentials.consumer_key)
         request_kwargs: dict[str, Any] = {
             "headers": {"Signature": signature, "Accept": "application/json"},
@@ -267,6 +284,57 @@ class ReadOnlySnapTradeClient:
         if not isinstance(payload, list):
             raise SnapTradeError("SnapTrade balances returned an invalid response")
         return [item for item in payload if isinstance(item, dict)]
+
+    @staticmethod
+    def _activity_date(value: str | None, field: str) -> str | None:
+        if value is None:
+            return None
+        try:
+            return date.fromisoformat(value).isoformat()
+        except (TypeError, ValueError) as exc:
+            raise SnapTradeEndpointRejected(f"Invalid {field} for activities request") from exc
+
+    def list_activities(
+        self,
+        account_id: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        offset: int = 0,
+        limit: int = 1_000,
+    ) -> dict[str, Any]:
+        """List completed daily/cached activities using strictly bounded parameters."""
+        if not _UUID_VALUE.fullmatch(account_id):
+            raise SnapTradeEndpointRejected("Invalid account identifier for activities request")
+        normalized_start = self._activity_date(start_date, "start date")
+        normalized_end = self._activity_date(end_date, "end date")
+        if normalized_start and normalized_end and normalized_start > normalized_end:
+            raise SnapTradeEndpointRejected("Activities start date must not follow end date")
+        if isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= 100_000:
+            raise SnapTradeEndpointRejected("Activities offset is outside the allowed range")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1_000:
+            raise SnapTradeEndpointRejected("Activities limit is outside the allowed range")
+        query_params: list[tuple[str, str]] = []
+        if normalized_start:
+            query_params.append(("startDate", normalized_start))
+        if normalized_end:
+            query_params.append(("endDate", normalized_end))
+        query_params.extend((("offset", str(offset)), ("limit", str(limit))))
+        payload = self._request(
+            "GET",
+            f"/accounts/{account_id}/activities",
+            query_params=query_params,
+            operation="completed activity synchronization",
+        )
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            raise SnapTradeError("SnapTrade activities returned an invalid response")
+        pagination = payload.get("pagination") or {}
+        if not isinstance(pagination, dict):
+            raise SnapTradeError("SnapTrade activities returned invalid pagination")
+        return {
+            "data": [item for item in payload["data"] if isinstance(item, dict)],
+            "pagination": pagination,
+        }
 
     def disconnect(self, connection_id: str) -> None:
         self._request(
