@@ -53,7 +53,6 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     app.dependency_overrides[sector_service] = lambda: sectors
     app.dependency_overrides[activity_service] = lambda: ActivityService(repository)
     app.dependency_overrides[analytics_service] = lambda: AnalyticsService(repository, sectors)
-    app.dependency_overrides[journal_service] = lambda: JournalService(journal_repository, repository)
     app.dependency_overrides[research_service] = lambda: ResearchService(
         journal_repository, repository, sectors
     )
@@ -65,6 +64,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     )
     market = MarketService(MarketRepository(repository.database), provider=history)
     app.dependency_overrides[market_service] = lambda: market
+    journal = JournalService(journal_repository, repository, market=market)
+    app.dependency_overrides[journal_service] = lambda: journal
     sec_repository = SecRepository(repository.database)
     sec = SecDataService(sec_repository, FakeSec())
     fundamentals = FundamentalsService(sec, market)
@@ -261,3 +262,36 @@ def test_sec_routes_explain_missing_configuration_and_unknown_filers(
     outage = client.get("/api/market/ACME/fundamentals")
     assert outage.status_code == 502
     assert "Couldn't reach SEC EDGAR" in outage.json()["detail"]
+
+
+def test_symbol_journal_decision_and_note_routes(client: TestClient) -> None:
+    empty = client.get("/api/market/acme/journal").json()
+    assert empty == {"symbol": "ACME", "instrument_id": None, "decision": None, "triggers": [], "notes": []}
+
+    decision = {"decision": "WATCH", "decision_date": "2026-10-20", "reason": "Waiting for a pullback"}
+    assert client.post("/api/market/ACME/decision", json=decision).status_code == 403
+    recorded = client.post("/api/market/ACME/decision", headers=WRITE, json=decision).json()
+    assert recorded["instrument_id"] is not None
+    assert recorded["decision"]["decision"] == "WATCH"
+
+    note = {"body": "Earnings gap filled.", "pinned_date": "2026-10-12"}
+    assert client.post("/api/market/ACME/notes", json=note).status_code == 403
+    created = client.post("/api/market/ACME/notes", headers=WRITE, json=note).json()["note"]
+    assert (created["pinned_date"], created["author"]) == ("2026-10-12", "USER")
+    future = client.post(
+        "/api/market/ACME/notes", headers=WRITE, json={"body": "x", "pinned_date": "2999-01-01"}
+    )
+    assert future.status_code == 422
+    assert client.post("/api/market/ACME/notes", headers=WRITE, json={"body": ""}).status_code == 422
+
+    edited = client.put(
+        f"/api/notes/{created['id']}", headers=WRITE, json={"body": "Gap filled; $40 support."}
+    )
+    assert edited.json()["note"]["pinned_date"] is None
+    assert [row["body"] for row in client.get("/api/market/ACME/journal").json()["notes"]] == [
+        "Gap filled; $40 support."
+    ]
+    assert client.delete(f"/api/notes/{created['id']}", headers=WRITE).status_code == 200
+    assert client.delete(f"/api/notes/{created['id']}", headers=WRITE).status_code == 404
+    assert client.put("/api/notes/missing", headers=WRITE, json={"body": "x"}).status_code == 404
+    assert client.get("/api/market/XIC.TO/journal").status_code == 422

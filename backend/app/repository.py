@@ -74,6 +74,26 @@ class PortfolioRepository:
         )
         return str(instrument["id"])
 
+    def instrument(self, instrument_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM instruments WHERE id = ?", (instrument_id,)).fetchone()
+        return dict(row) if row else None
+
+    def instrument_by_symbol(self, symbol: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM instruments WHERE canonical_symbol = ?", (symbol,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def ensure_instrument(self, identity: dict[str, Any]) -> str:
+        """Return the instrument for a symbol, creating it for tickers that are not held."""
+        existing = self.instrument_by_symbol(identity["canonical_symbol"])
+        if existing is not None:
+            return str(existing["id"])
+        with self.database.transaction() as connection:
+            return self._upsert_instrument(connection, identity, utc_now())
+
     def create_snapshot(
         self,
         rows: list[dict[str, Any]],

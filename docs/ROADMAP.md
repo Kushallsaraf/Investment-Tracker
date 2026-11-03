@@ -10,7 +10,7 @@ explicit "not available" states, and no trading actions.
 - **Chart.** Cached daily Yahoo history, TradingView candle/line chart, overlays,
   RSI/MACD pane, and a Python-computed technical setup panel.
 
-## Phase 3: SEC EDGAR data (built; pending a live check against SEC)
+## Phase 3: SEC EDGAR data (built and checked against live SEC data)
 
 - Map tickers to SEC CIKs from `company_tickers.json`; send the User-Agent with a
   contact email that SEC requires, read from local configuration.
@@ -21,7 +21,7 @@ explicit "not available" states, and no trading actions.
 - **Peers** seeded from the SIC industry code and editable.
 - Cache filings in SQLite with fetched-at and filing dates on every value.
 
-## Phase 4: Notes and a shared symbol identity
+## Phase 4: Notes and a shared symbol identity (built)
 
 - Notes per ticker, optionally pinned to a chart date and drawn as chart markers.
 - **Shared identity.** Today journal tables (decisions, review triggers) are keyed by

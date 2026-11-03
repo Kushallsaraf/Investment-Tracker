@@ -58,6 +58,11 @@ class PeerUpdate(BaseModel):
     symbols: list[str] = Field(default_factory=list, max_length=10)
 
 
+class NoteCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=10_000)
+    pinned_date: date | None = None
+
+
 class LoadDemoRequest(BaseModel):
     confirm: Literal["LOAD DEMO"]
 

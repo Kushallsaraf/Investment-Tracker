@@ -162,6 +162,7 @@ class MarketService:
         highs = [bar["high"] for bar in bars]
         lows = [bar["low"] for bar in bars]
         close = closes[-1]
+        sma20 = indicators.sma(closes, 20)[-1]
         sma50 = indicators.sma(closes, 50)[-1]
         sma200 = indicators.sma(closes, 200)[-1]
         rsi14 = indicators.rsi(closes)[-1]
@@ -195,8 +196,10 @@ class MarketService:
             "close": _round(close),
             "trend": {
                 "label": trend_label,
+                "sma20": _round(sma20),
                 "sma50": _round(sma50),
                 "sma200": _round(sma200),
+                "above_sma20": close > sma20 if sma20 is not None else None,
                 "above_sma50": close > sma50 if sma50 is not None else None,
                 "above_sma200": close > sma200 if sma200 is not None else None,
                 "distance_sma50_pct": _round(close / sma50 - 1, 6) if sma50 else None,

@@ -12,6 +12,7 @@ import type {
   IncomePayload,
   InsiderActivity,
   InvestmentProfile,
+  Note,
   JournalPayload,
   PeerComparison,
   Portfolio,
@@ -23,6 +24,7 @@ import type {
   SectorAnalysis,
   SectorName,
   StripItem,
+  SymbolJournal,
   Technicals,
   WatchlistItem,
 } from "./types";
@@ -302,4 +304,38 @@ export async function resetPeers(symbol: string): Promise<PeerComparison> {
     method: "DELETE",
     headers: WRITE_HEADERS,
   }));
+}
+
+export async function getSymbolJournal(symbol: string): Promise<SymbolJournal> {
+  return responseJson<SymbolJournal>(await fetch(`/api/market/${encodeURIComponent(symbol)}/journal`));
+}
+
+export async function saveSymbolDecision(symbol: string, decision: DecisionName, reason: string): Promise<SymbolJournal> {
+  return responseJson<SymbolJournal>(await fetch(`/api/market/${encodeURIComponent(symbol)}/decision`, {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify({ decision, decision_date: new Date().toISOString().slice(0, 10), reason }),
+  }));
+}
+
+export async function addNote(symbol: string, body: string, pinnedDate: string | null): Promise<Note> {
+  const payload = await responseJson<{ note: Note }>(await fetch(`/api/market/${encodeURIComponent(symbol)}/notes`, {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify({ body, pinned_date: pinnedDate }),
+  }));
+  return payload.note;
+}
+
+export async function updateNote(noteId: string, body: string, pinnedDate: string | null): Promise<Note> {
+  const payload = await responseJson<{ note: Note }>(await fetch(`/api/notes/${noteId}`, {
+    method: "PUT",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify({ body, pinned_date: pinnedDate }),
+  }));
+  return payload.note;
+}
+
+export async function deleteNote(noteId: string): Promise<void> {
+  await responseJson(await fetch(`/api/notes/${noteId}`, { method: "DELETE", headers: WRITE_HEADERS }));
 }

@@ -1,6 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+
+const chartMocks = vi.hoisted(() => ({
+  setMarkers: vi.fn(),
+  clickHandlers: [] as Array<(param: { time?: string }) => void>,
+}));
 
 vi.mock("lightweight-charts", () => {
   const series = () => ({ setData: vi.fn(), createPriceLine: vi.fn(), priceScale: () => ({ applyOptions: vi.fn() }) });
@@ -11,8 +16,14 @@ vi.mock("lightweight-charts", () => {
       timeScale: () => ({ fitContent: vi.fn() }),
       subscribeCrosshairMove: vi.fn(),
       unsubscribeCrosshairMove: vi.fn(),
+      subscribeClick: vi.fn((handler: (param: { time?: string }) => void) => chartMocks.clickHandlers.push(handler)),
+      unsubscribeClick: vi.fn(),
       remove: vi.fn(),
     })),
+    createSeriesMarkers: vi.fn((_series: unknown, markers: unknown) => {
+      chartMocks.setMarkers(markers);
+      return { setMarkers: chartMocks.setMarkers };
+    }),
     CandlestickSeries: {}, LineSeries: {}, HistogramSeries: {},
     ColorType: { Solid: "solid" }, CrosshairMode: { Normal: 0 }, LineStyle: { Solid: 0, Dotted: 1, Dashed: 2 },
   };
@@ -100,7 +111,7 @@ function chartPayload(symbol: string, range: string) {
 
 const technicals = {
   symbol: "SPY", as_of: "2026-09-30", close: 130,
-  trend: { label: "Uptrend", sma50: 120, sma200: 110, above_sma50: true, above_sma200: true, distance_sma50_pct: 0.083 },
+  trend: { label: "Uptrend", sma20: 128, sma50: 120, sma200: 110, above_sma20: false, above_sma50: true, above_sma200: true, distance_sma50_pct: 0.083 },
   rsi14: 64.2, rsi_zone: "neutral", macd: { value: 1.2, signal: 0.8, state: "bullish" },
   range_52w: { high: 131, low: 90, position: 0.97 },
   relative_strength_3m: { benchmark: "SPY", symbol_return: 0.05, benchmark_return: 0.05, difference: 0 },
@@ -143,6 +154,19 @@ const peers = {
   source: "SEC EDGAR",
 };
 
+const note = {
+  id: "note-1", symbol: "SPY", body: "Earnings gap filled. Watching $125 as support.", pinned_date: "2026-09-15",
+  author: "USER", created_at: "2026-09-16T12:00:00Z", updated_at: "2026-09-16T12:00:00Z",
+};
+function journalFor(symbol: string, decision: string | null = null) {
+  return {
+    symbol, instrument_id: decision ? "instrument-9" : null,
+    decision: decision ? { instrument_id: "instrument-9", symbol, decision, reason: "", decision_date: "2026-10-20", review_due_date: null, updated_at: "2026-10-20T00:00:00Z" } : null,
+    triggers: [{ id: "trigger-1", instrument_id: "instrument-9", symbol, trigger_type: "PRICE_ABOVE", lower_value: null, upper_value: "140", trigger_date: null, note: "", reason: "", expires_at: null, state: "ACTIVE", created_at: "2026-10-20T00:00:00Z", triggered_at: null, observed_value: null, quote_source: null, quote_timestamp: null, frozen_holding_snapshot_id: null, frozen_valuation_snapshot_id: null }],
+    notes: symbol === "SPY" ? [note] : [],
+  };
+}
+
 function response(body: unknown, code = 200) {
   return new Response(JSON.stringify(body), { status: code, headers: { "Content-Type": "application/json" } });
 }
@@ -165,6 +189,13 @@ function createFetch(overrides: Record<string, unknown> = {}) {
     }
     if (/^\/api\/market\/[^/]+\/technicals$/.test(url)) return response(technicals);
     if (/^\/api\/market\/[^/]+\/fundamentals$/.test(url)) return response(fundamentals);
+    const journalMatch = /^\/api\/market\/([^/]+)\/(journal|decision|notes)$/.exec(url);
+    if (journalMatch) {
+      const symbol = decodeURIComponent(journalMatch[1]);
+      if (journalMatch[2] === "decision") return response(journalFor(symbol, JSON.parse(String(init?.body)).decision));
+      if (journalMatch[2] === "notes") return response({ status: "ok", note: { ...note, id: "note-2", ...JSON.parse(String(init?.body)) } });
+      return response(journalFor(symbol));
+    }
     if (/^\/api\/market\/[^/]+\/insiders\?days=90$/.test(url)) return response(insiders);
     if (/^\/api\/market\/[^/]+\/peers$/.test(url)) {
       if (method === "PUT") return response({ ...peers, peers: JSON.parse(String(init?.body)).symbols, list_source: "USER" });
@@ -230,13 +261,13 @@ describe("Investment Tracker", () => {
     expect(screen.getByText("SPY Synthetic Inc. · NYSE · STOCK")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "SPY daily candlestick chart, 1Y range" })).toBeInTheDocument();
     expect(screen.getByText("765.37")).toBeInTheDocument();
-    expect(await screen.findByText(/Uptrend · above 50 \/ above 200 SMA/)).toBeInTheDocument();
+    expect(await screen.findByText("below / above / above")).toBeInTheDocument();
     expect(screen.getByText("64.2 · neutral")).toBeInTheDocument();
     expect(screen.getByText("1.62×")).toBeInTheDocument();
     for (const title of ["AI analyst", "Strategy scanner", "Fundamentals", "News and sentiment", "Insider activity", "Peers", "Macro and markets"]) {
       expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
     }
-    expect(screen.getAllByText("Not connected yet")).toHaveLength(5);
+    expect(screen.getAllByText("Not connected yet")).toHaveLength(4);
     expect(window.location.hash).toBe("#terminal/SPY");
   });
 
@@ -289,6 +320,38 @@ describe("Investment Tracker", () => {
     expect(await screen.findByText("YOUR LIST")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "AMD" }));
     expect(await screen.findByRole("heading", { name: "AMD" })).toBeInTheDocument();
+  });
+
+  it("keeps notes pinned to the chart and records a decision for any ticker", async () => {
+    chartMocks.setMarkers.mockClear();
+    chartMocks.clickHandlers.length = 0;
+    const fetchMock = createFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    expect(await screen.findByText(note.body)).toBeInTheDocument();
+    expect(screen.getByText("PINNED SEP 15, 2026")).toBeInTheDocument();
+    expect(screen.getByText("Review above 140 · ACTIVE")).toBeInTheDocument();
+    await waitFor(() => expect(chartMocks.setMarkers).toHaveBeenCalledWith([
+      expect.objectContaining({ time: "2026-09-15", position: "aboveBar", text: "N" }),
+    ]));
+
+    act(() => chartMocks.clickHandlers.at(-1)?.({ time: "2026-09-20" }));
+    expect(await screen.findByLabelText("Pin note to date")).toHaveValue("2026-09-20");
+    fireEvent.click(screen.getByRole("button", { name: "ADD NOTE" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Write a note first.");
+    fireEvent.change(screen.getByRole("textbox", { name: "New note for SPY" }), { target: { value: "Breakout above 130." } });
+    fireEvent.click(screen.getByRole("button", { name: "ADD NOTE" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/market/SPY/notes", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ body: "Breakout above 130.", pinned_date: "2026-09-20" }),
+    })));
+
+    fireEvent.change(screen.getByRole("combobox", { name: "My decision for SPY" }), { target: { value: "CONSIDER_ADD" } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/market/SPY/decision", expect.objectContaining({ method: "POST" })));
+    expect(await screen.findByRole("combobox", { name: "My decision for SPY" })).toHaveValue("CONSIDER_ADD");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete note from Sep 16, 2026" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/notes/note-1", expect.objectContaining({ method: "DELETE" })));
   });
 
   it("explains when SEC EDGAR is not configured", async () => {

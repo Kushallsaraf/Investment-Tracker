@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.journal_repository import JournalRepository
+from app.providers.prices import normalize_symbol
 from app.repository import PortfolioRepository
 
 DECISIONS = {"WATCH", "HOLD", "CONSIDER_ADD", "CONSIDER_REDUCE", "EXIT_CANDIDATE"}
@@ -19,6 +20,10 @@ CLAUDE_SUGGESTIONS = {
     "INSUFFICIENT_DATA",
 }
 DISPOSITIONS = {"ACCEPTED", "REJECTED", "CONSIDERING"}
+NOTE_AUTHORS = {"USER", "CLAUDE"}
+MAX_NOTE_LENGTH = 10_000
+# A daily close older than this is too stale to fire a price trigger for an unheld ticker.
+MAX_CLOSE_AGE = timedelta(days=5)
 TRIGGER_TYPES = {
     "PRICE_BELOW",
     "PRICE_ABOVE",
@@ -54,26 +59,100 @@ class JournalService:
         self,
         repository: JournalRepository,
         portfolio_repository: PortfolioRepository,
+        *,
+        market: Any = None,
     ) -> None:
         self.repository = repository
         self.portfolio_repository = portfolio_repository
+        # The market service is optional: it resolves Terminal tickers that are not held
+        # and supplies cached daily closes for their price triggers.
+        self.market = market
 
-    def _holding(self, instrument_id: str) -> dict[str, Any]:
-        portfolio = self.portfolio_repository.latest_portfolio()
-        holding = next(
-            (
-                row
-                for row in (portfolio or {}).get("holdings", [])
-                if row["instrument_id"] == instrument_id
-            ),
+    def _instrument(self, instrument_id: str) -> dict[str, Any]:
+        instrument = self.portfolio_repository.instrument(instrument_id)
+        if instrument is None:
+            raise KeyError("Instrument was not found")
+        return instrument
+
+    def resolve_symbol(self, symbol: str) -> str:
+        """Instrument ID for any Terminal ticker, created from its cached listing if not held."""
+        canonical = normalize_symbol(symbol)
+        existing = self.portfolio_repository.instrument_by_symbol(canonical)
+        if existing is not None:
+            return str(existing["id"])
+        if self.market is None:
+            raise KeyError(f"{canonical} has no instrument record")
+        meta, _, _ = self.market.ensure_history(canonical)
+        return self.portfolio_repository.ensure_instrument(
+            {
+                "canonical_symbol": meta["symbol"],
+                "security_name": meta["security_name"],
+                "asset_type": meta["asset_type"],
+                "exchange": meta["exchange"],
+            }
+        )
+
+    def symbol_journal(self, symbol: str) -> dict[str, Any]:
+        """Decision, open triggers, and notes for one ticker, held or not."""
+        canonical = normalize_symbol(symbol)
+        self.evaluate_triggers()
+        instrument = self.portfolio_repository.instrument_by_symbol(canonical)
+        instrument_id = str(instrument["id"]) if instrument else None
+        decision = next(
+            (row for row in self.repository.decisions() if row["instrument_id"] == instrument_id),
             None,
         )
-        if holding is None:
-            raise KeyError("Holding was not found in the current portfolio snapshot")
-        return holding
+        open_states = {"ACTIVE", "TRIGGERED"}
+        triggers = (
+            [row for row in self.repository.triggers(instrument_id) if row["state"] in open_states]
+            if instrument_id
+            else []
+        )
+        return {
+            "symbol": canonical,
+            "instrument_id": instrument_id,
+            "decision": decision,
+            "triggers": triggers,
+            "notes": self.repository.notes(canonical),
+        }
+
+    def save_symbol_decision(self, symbol: str, values: dict[str, Any]) -> dict[str, Any]:
+        return self.save_decision(self.resolve_symbol(symbol), values)
+
+    @staticmethod
+    def _note_values(body: str, pinned_date: str | None) -> tuple[str, str | None]:
+        text = body.strip()
+        if not text:
+            raise ValueError("A note needs some text")
+        if len(text) > MAX_NOTE_LENGTH:
+            raise ValueError(f"Notes are limited to {MAX_NOTE_LENGTH:,} characters")
+        pinned = None
+        if pinned_date:
+            parsed = _date(pinned_date)
+            if parsed is None or len(pinned_date) != 10:
+                raise ValueError("Pinned date must be an ISO date")
+            if parsed > datetime.now(UTC).date():
+                raise ValueError("Pinned date can't be in the future")
+            pinned = parsed.isoformat()
+        return text, pinned
+
+    def add_note(
+        self, symbol: str, body: str, pinned_date: str | None = None, *, author: str = "USER"
+    ) -> dict[str, Any]:
+        if author not in NOTE_AUTHORS:
+            raise ValueError("Unsupported note author")
+        text, pinned = self._note_values(body, pinned_date)
+        return self.repository.add_note(normalize_symbol(symbol), text, pinned, author)
+
+    def update_note(self, note_id: str, body: str, pinned_date: str | None = None) -> dict[str, Any]:
+        text, pinned = self._note_values(body, pinned_date)
+        return self.repository.update_note(note_id, text, pinned)
+
+    def delete_note(self, note_id: str) -> None:
+        self.repository.delete_note(note_id)
 
     def save_profile(self, instrument_id: str, values: dict[str, Any]) -> dict[str, Any]:
-        holding = self._holding(instrument_id)
+        holding = self._instrument(instrument_id)
         role = values.get("portfolio_role")
         strength = values.get("thesis_strength")
         maximum = _decimal(values.get("maximum_weight"))
@@ -93,7 +172,7 @@ class JournalService:
         return self.repository.profile(instrument_id) or {}
 
     def save_decision(self, instrument_id: str, values: dict[str, Any]) -> dict[str, Any]:
-        holding = self._holding(instrument_id)
+        holding = self._instrument(instrument_id)
         decision = str(values.get("decision") or "")
         if decision not in DECISIONS:
             raise ValueError("Unsupported investment decision")
@@ -105,7 +184,7 @@ class JournalService:
         )
 
     def create_trigger(self, instrument_id: str, values: dict[str, Any]) -> dict[str, Any]:
-        holding = self._holding(instrument_id)
+        holding = self._instrument(instrument_id)
         trigger_type = str(values.get("trigger_type") or "")
         if trigger_type not in TRIGGER_TYPES:
             raise ValueError("Unsupported review trigger")
@@ -131,11 +210,30 @@ class JournalService:
         self.evaluate_triggers()
         return created
 
+    def _daily_close(self, symbol: str, now: datetime) -> dict[str, Any] | None:
+        """Latest cached daily close for a ticker that is not in the portfolio."""
+        if self.market is None:
+            return None
+        bars = self.market.repository.bars(symbol)
+        if not bars:
+            return None
+        last = bars[-1]
+        stale = now.date() - date.fromisoformat(last["date"]) > MAX_CLOSE_AGE
+        return {
+            "price": str(last["close"]),
+            "price_stale": stale,
+            "data_status": "stale" if stale else "end_of_day",
+            "price_source": "Yahoo Finance chart (daily close)",
+            "price_timestamp": last["date"],
+        }
+
     def evaluate_triggers(self, now: datetime | None = None) -> None:
         effective_now = now or datetime.now(UTC)
-        portfolio = self.portfolio_repository.latest_portfolio()
-        if portfolio is None:
-            return
+        portfolio = self.portfolio_repository.latest_portfolio() or {
+            "holdings": [],
+            "holding_snapshot_id": None,
+            "valuation_snapshot_id": None,
+        }
         holdings = {row["instrument_id"]: row for row in portfolio["holdings"]}
         for trigger in self.repository.triggers():
             if trigger["state"] != "ACTIVE":
@@ -151,7 +249,11 @@ class JournalService:
             if trigger_type in {"DATE", "AFTER_EARNINGS"}:
                 due_date = _date(trigger.get("trigger_date"))
                 due = bool(due_date and due_date <= effective_now.date())
-            elif trigger_type != "THESIS_NOTE" and holding is not None:
+            elif trigger_type != "THESIS_NOTE":
+                if holding is None:
+                    holding = self._daily_close(str(trigger["symbol"]), effective_now)
+                if holding is None:
+                    continue
                 price = _decimal(holding.get("price"))
                 sufficiently_fresh = bool(
                     price is not None

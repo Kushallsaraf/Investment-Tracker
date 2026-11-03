@@ -370,3 +370,44 @@ class JournalRepository:
             item["source_links"] = json.loads(item.pop("source_links_json"))
             result.append(item)
         return result
+
+    def notes(self, symbol: str) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM notes WHERE symbol = ? ORDER BY created_at DESC", (symbol,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def note(self, note_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+        return dict(row) if row else None
+
+    def add_note(self, symbol: str, body: str, pinned_date: str | None, author: str) -> dict[str, Any]:
+        note_id = uuid.uuid4().hex
+        now = utc_now()
+        with self.database.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO notes (id, symbol, body, pinned_date, author, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (note_id, symbol, body, pinned_date, author, now, now),
+            )
+        return self.note(note_id) or {}
+
+    def update_note(self, note_id: str, body: str, pinned_date: str | None) -> dict[str, Any]:
+        with self.database.transaction() as connection:
+            updated = connection.execute(
+                "UPDATE notes SET body = ?, pinned_date = ?, updated_at = ? WHERE id = ?",
+                (body, pinned_date, utc_now(), note_id),
+            ).rowcount
+        if not updated:
+            raise KeyError("Note was not found")
+        return self.note(note_id) or {}
+
+    def delete_note(self, note_id: str) -> None:
+        with self.database.transaction() as connection:
+            deleted = connection.execute("DELETE FROM notes WHERE id = ?", (note_id,)).rowcount
+        if not deleted:
+            raise KeyError("Note was not found")

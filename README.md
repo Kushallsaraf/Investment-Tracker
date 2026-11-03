@@ -65,7 +65,12 @@ ticker search (`⌘K`, `Ctrl K`, or `/`) or the watchlist.
 - Peers are seeded from the company's SEC industry code (larger companies first) and
   can be edited or reset. The table compares valuation, growth, margins, and
   3-month return.
-- The AI analyst, strategy scanner, news and sentiment, notes, and macro panels are
+- Notes are saved per ticker and can be pinned to a date; pinned notes appear as
+  markers on the chart (click a candle to pick its date). The notes panel also
+  records your decision for any ticker, held or not, and lists its open review
+  triggers. Price triggers on tickers you don't hold are checked against the cached
+  daily close.
+- The AI analyst, strategy scanner, news and sentiment, and macro panels are
   placeholders until their data sources are connected.
 
 **Portfolio** keeps the holdings workspace in eight sub-views:

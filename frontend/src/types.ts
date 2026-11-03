@@ -412,8 +412,10 @@ export type Technicals = {
   close: number;
   trend: {
     label: "Uptrend" | "Downtrend" | "Mixed" | null;
+    sma20: number | null;
     sma50: number | null;
     sma200: number | null;
+    above_sma20: boolean | null;
     above_sma50: boolean | null;
     above_sma200: boolean | null;
     distance_sma50_pct: number | null;
@@ -553,4 +555,22 @@ export type PeerComparison = NotApplicable | {
   sic_description: string | null;
   rows: PeerRow[];
   source: string;
+};
+
+export type Note = {
+  id: string;
+  symbol: string;
+  body: string;
+  pinned_date: string | null;
+  author: "USER" | "CLAUDE";
+  created_at: string;
+  updated_at: string;
+};
+
+export type SymbolJournal = {
+  symbol: string;
+  instrument_id: string | null;
+  decision: CurrentDecision | null;
+  triggers: ReviewTrigger[];
+  notes: Note[];
 };

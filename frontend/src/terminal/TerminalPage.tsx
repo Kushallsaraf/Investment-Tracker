@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { addToWatchlist, getChart, getTechnicals, getWatchlist, removeFromWatchlist } from "../api";
+import { addToWatchlist, getChart, getSymbolJournal, getTechnicals, getWatchlist, removeFromWatchlist } from "../api";
 import { DataPanel } from "../components/ui";
 import { dateOnly, price, signedPercent, timestamp } from "../lib/format";
-import type { ChartPayload, ChartRange, Technicals, WatchlistItem } from "../types";
+import type { ChartPayload, ChartRange, SymbolJournal, Technicals, WatchlistItem } from "../types";
 import { type ChartType, type LowerPane, type Overlay, OVERLAY_LABELS, PriceChart } from "./PriceChart";
+import { NotesPanel } from "./NotesPanel";
 import { FundamentalsPanel, InsiderPanel, PeersPanel } from "./SecPanels";
 
 const RANGES: ChartRange[] = ["1M", "3M", "6M", "1Y", "5Y", "MAX"];
@@ -42,6 +43,8 @@ export function TerminalPage({ symbol, onOpenSymbol }: { symbol: string; onOpenS
   const [watchlist, setWatchlist] = useState<WatchlistItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [journal, setJournal] = useState<SymbolJournal | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   function updatePrefs(next: Partial<ChartPrefs>) {
     setPrefs((current) => {
@@ -78,6 +81,15 @@ export function TerminalPage({ symbol, onOpenSymbol }: { symbol: string; onOpenS
       .catch(() => undefined);
     return () => { cancelled = true; };
   }, [symbol]);
+
+  const loadJournal = useCallback(() => {
+    void getSymbolJournal(symbol).then((payload) => setJournal(payload)).catch(() => undefined);
+  }, [symbol]);
+  useEffect(() => {
+    setJournal(null);
+    setSelectedDate(null);
+    loadJournal();
+  }, [loadJournal]);
 
   const loadWatchlist = useCallback(() => {
     void getWatchlist().then(setWatchlist).catch(() => setWatchlist([]));
@@ -137,7 +149,7 @@ export function TerminalPage({ symbol, onOpenSymbol }: { symbol: string; onOpenS
           {error && !shown ? (
             <div className="chart-empty" role="alert"><strong>{symbol} is unavailable</strong><span>{error}</span></div>
           ) : shown ? (
-            <PriceChart data={shown} chartType={prefs.chartType} overlays={prefs.overlays} lowerPane={prefs.lowerPane} />
+            <PriceChart data={shown} chartType={prefs.chartType} overlays={prefs.overlays} lowerPane={prefs.lowerPane} notes={journal?.symbol === shown.symbol ? journal.notes : []} onSelectDate={setSelectedDate} />
           ) : (
             <div className="chart-empty"><span>Loading daily history…</span></div>
           )}
@@ -164,7 +176,7 @@ export function TerminalPage({ symbol, onOpenSymbol }: { symbol: string; onOpenS
         <PlannedPanel title="News and sentiment" meta="RSS · 8-K" source="Headline feeds and SEC filings · FinBERT scoring" lines={["Latest headlines and filings for this ticker.", "Each headline scored positive, neutral or negative, with a 7-day trend."]} />
       </div>
       <div className="terminal-row">
-        <PlannedPanel title={`My notes · ${symbol}`} meta="LOCAL" source="Saved on this computer" lines={["Notes for this ticker, optionally pinned to a date on the chart."]} />
+        <NotesPanel symbol={symbol} journal={journal?.symbol === symbol ? journal : null} selectedDate={selectedDate} onChanged={(next) => (next ? setJournal(next) : loadJournal())} />
         <PlannedPanel className="span-2" title="Macro and markets" meta="DAILY" source="Sector ETFs · FRED economic data" lines={["Sector heatmap, Fed funds rate, yield curve, inflation and this week's economic calendar."]} />
       </div>
     </div>
@@ -204,7 +216,8 @@ function WatchlistPanel({
 function TechnicalPanel({ data }: { data: Technicals | null }) {
   const rs = data?.relative_strength_3m;
   const rows: Array<[string, string, string?]> = data ? [
-    ["Trend", data.trend.label ? `${data.trend.label} · ${data.trend.above_sma50 ? "above" : "below"} 50 / ${data.trend.above_sma200 ? "above" : "below"} 200 SMA` : "Not enough history", data.trend.label === "Uptrend" ? "positive" : data.trend.label === "Downtrend" ? "negative" : ""],
+    ["Trend", data.trend.label ?? "Not enough history", data.trend.label === "Uptrend" ? "positive" : data.trend.label === "Downtrend" ? "negative" : ""],
+    ["Price vs 20 / 50 / 200 SMA", [data.trend.above_sma20, data.trend.above_sma50, data.trend.above_sma200].map((above) => (above == null ? "—" : above ? "above" : "below")).join(" / ")],
     ["RSI (14)", data.rsi14 == null ? "—" : `${data.rsi14.toFixed(1)} · ${data.rsi_zone}`, data.rsi_zone === "overbought" ? "warning" : data.rsi_zone === "oversold" ? "warning" : ""],
     ["MACD", data.macd.state ? `${data.macd.state} crossover state` : "—", data.macd.state === "bullish" ? "positive" : data.macd.state === "bearish" ? "negative" : ""],
     ["52-week range", data.range_52w.position == null ? "—" : `${Math.round(data.range_52w.position * 100)}% · ${price(data.range_52w.low)}–${price(data.range_52w.high)}`],

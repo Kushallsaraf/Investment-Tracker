@@ -27,6 +27,7 @@ from app.schemas import (
     DeletePortfolioDataRequest,
     InvestmentProfileUpdate,
     LoadDemoRequest,
+    NoteCreate,
     PeerUpdate,
     PositionUpsert,
     ReviewPackRequest,
@@ -78,9 +79,9 @@ _portfolio_service = PortfolioService(_repository)
 _sector_service = SectorService(_repository)
 _activity_service = ActivityService(_repository)
 _analytics_service = AnalyticsService(_repository, _sector_service)
-_journal_service = JournalService(_journal_repository, _repository)
 _research_service = ResearchService(_journal_repository, _repository, _sector_service)
 _market_service = MarketService(MarketRepository(_database))
+_journal_service = JournalService(_journal_repository, _repository, market=_market_service)
 _sec_repository = SecRepository(_database)
 _sec_data = SecDataService(_sec_repository, SecClient(settings.sec_user_agent))
 _fundamentals_service = FundamentalsService(_sec_data, _market_service)
@@ -238,6 +239,41 @@ def update_market_peers(
 def reset_market_peers(symbol: str, service: PeerService = Depends(peer_service)) -> dict:
     _sec_call(lambda: service.reset(symbol))
     return _sec_call(lambda: service.comparison(symbol))
+
+
+@app.get("/api/market/{symbol}/journal")
+def market_journal(symbol: str, service: JournalService = Depends(journal_service)) -> dict:
+    return _market_call(lambda: service.symbol_journal(symbol))
+
+
+@app.post("/api/market/{symbol}/decision", dependencies=[Depends(require_local_write)])
+def record_market_decision(
+    symbol: str, request: DecisionUpdate, service: JournalService = Depends(journal_service)
+) -> dict:
+    _market_call(lambda: service.save_symbol_decision(symbol, request.model_dump(mode="json")))
+    return _market_call(lambda: service.symbol_journal(symbol))
+
+
+@app.post("/api/market/{symbol}/notes", dependencies=[Depends(require_local_write)])
+def add_market_note(
+    symbol: str, request: NoteCreate, service: JournalService = Depends(journal_service)
+) -> dict:
+    pinned = request.pinned_date.isoformat() if request.pinned_date else None
+    return {"status": "ok", "note": _market_call(lambda: service.add_note(symbol, request.body, pinned))}
+
+
+@app.put("/api/notes/{note_id}", dependencies=[Depends(require_local_write)])
+def update_note(
+    note_id: str, request: NoteCreate, service: JournalService = Depends(journal_service)
+) -> dict:
+    pinned = request.pinned_date.isoformat() if request.pinned_date else None
+    return {"status": "ok", "note": _market_call(lambda: service.update_note(note_id, request.body, pinned))}
+
+
+@app.delete("/api/notes/{note_id}", dependencies=[Depends(require_local_write)])
+def delete_note(note_id: str, service: JournalService = Depends(journal_service)) -> dict:
+    _market_call(lambda: service.delete_note(note_id))
+    return {"status": "deleted"}
 
 
 @app.get("/api/watchlist")

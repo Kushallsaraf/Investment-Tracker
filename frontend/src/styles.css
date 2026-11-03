@@ -355,6 +355,23 @@ button.strip-item:hover { background: var(--selected); }
 .peers-table td small { display: block; max-width: 160px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .link-button { border: 0; padding: 0; color: var(--blue); background: none; font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .planned-body { padding: 10px 13px 12px; }
+.legend-note { flex-basis: 100%; color: #e8c56b; }
+.decision-select { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 8.5px; letter-spacing: .06em; }
+.decision-select select { min-height: 24px; padding: 0 6px; font-size: 10px; }
+.note-form { display: grid; gap: 6px; padding: 10px 13px; border-bottom: 1px solid var(--border); }
+.note-form textarea { min-height: 58px; resize: vertical; font-size: 11px; line-height: 1.45; }
+.note-form small { color: var(--muted); font-size: 9.5px; }
+.note-form-row { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 6px; }
+.note-form-row label { display: grid; gap: 3px; margin-right: auto; color: var(--muted); font-size: 8.5px; letter-spacing: .06em; }
+.trigger-list { margin: 0; padding: 6px 13px; border-bottom: 1px solid var(--border); list-style: none; color: #a4acb6; font-size: 10px; line-height: 1.6; }
+.note-list { max-height: 320px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.note-item { border-bottom: 1px solid var(--border); padding: 8px 13px; }
+.note-item p { margin: 4px 0 0; color: var(--text); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 9.5px; }
+.note-chip { border: 1px solid #5c512d; padding: 1px 5px; color: var(--warning); font-size: 8.5px; letter-spacing: .05em; }
+.note-chip.claude { border-color: #4b3f66; color: #b190dd; }
+.note-actions { display: flex; gap: 10px; margin-left: auto; }
+.link-button.danger { color: var(--negative); }
 .planned-body strong { display: inline-block; margin-bottom: 6px; border: 1px solid #3a424c; padding: 3px 6px; color: var(--muted); font-size: 8.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
 .planned-body ul { margin: 0; padding-left: 16px; color: #a4acb6; font-size: 10.5px; line-height: 1.55; }
 
