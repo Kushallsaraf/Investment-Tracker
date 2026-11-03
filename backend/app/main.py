@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +17,7 @@ from app.database import Database
 from app.journal_repository import JournalRepository
 from app.market_repository import MarketRepository
 from app.providers.prices import UnsupportedSymbolError
+from app.providers.sec import SecClient, SecNotConfiguredError
 from app.repository import PortfolioRepository
 from app.schemas import (
     ActivityCreate,
@@ -25,18 +27,24 @@ from app.schemas import (
     DeletePortfolioDataRequest,
     InvestmentProfileUpdate,
     LoadDemoRequest,
+    PeerUpdate,
     PositionUpsert,
     ReviewPackRequest,
     SectorUpdateRequest,
     TriggerCreate,
     WatchlistAdd,
 )
+from app.sec_repository import SecRepository
 from app.services.activities import ActivityService
 from app.services.analytics import AnalyticsService
+from app.services.fundamentals import FundamentalsService
+from app.services.insiders import InsiderService
 from app.services.journal import JournalService
 from app.services.market import MarketService
+from app.services.peers import PeerService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
+from app.services.sec_data import SecDataService, SecFilerNotFoundError
 from app.services.sectors import SectorService
 
 T = TypeVar("T")
@@ -73,6 +81,11 @@ _analytics_service = AnalyticsService(_repository, _sector_service)
 _journal_service = JournalService(_journal_repository, _repository)
 _research_service = ResearchService(_journal_repository, _repository, _sector_service)
 _market_service = MarketService(MarketRepository(_database))
+_sec_repository = SecRepository(_database)
+_sec_data = SecDataService(_sec_repository, SecClient(settings.sec_user_agent))
+_fundamentals_service = FundamentalsService(_sec_data, _market_service)
+_insider_service = InsiderService(_sec_data, _market_service)
+_peer_service = PeerService(_sec_data, _market_service, _fundamentals_service, _sec_repository)
 
 def portfolio_service() -> PortfolioService:
     return _portfolio_service
@@ -100,6 +113,39 @@ def research_service() -> ResearchService:
 
 def market_service() -> MarketService:
     return _market_service
+
+
+def fundamentals_service() -> FundamentalsService:
+    return _fundamentals_service
+
+
+def insider_service() -> InsiderService:
+    return _insider_service
+
+
+def peer_service() -> PeerService:
+    return _peer_service
+
+
+def _sec_call(action: Callable[[], T]) -> T:
+    """Map SEC EDGAR failures to HTTP errors; price-history failures reuse the market mapping."""
+    try:
+        return _market_call(action)
+    except HTTPException as exc:
+        cause = exc.__cause__
+        if isinstance(cause, SecNotConfiguredError):
+            raise HTTPException(status_code=503, detail=str(cause)) from cause
+        if isinstance(cause, SecFilerNotFoundError):
+            raise HTTPException(status_code=404, detail=str(cause.args[0])) from cause
+        if isinstance(cause, httpx.HTTPError):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Couldn't reach SEC EDGAR ({type(cause).__name__}). "
+                    "Check your network and try again."
+                ),
+            ) from cause
+        raise
 
 
 def _market_call(action: Callable[[], T]) -> T:
@@ -159,6 +205,39 @@ def market_chart(
 @app.get("/api/market/{symbol}/technicals")
 def market_technicals(symbol: str, service: MarketService = Depends(market_service)) -> dict:
     return _market_call(lambda: service.technicals(symbol))
+
+
+@app.get("/api/market/{symbol}/fundamentals")
+def market_fundamentals(symbol: str, service: FundamentalsService = Depends(fundamentals_service)) -> dict:
+    return _sec_call(lambda: service.fundamentals(symbol))
+
+
+@app.get("/api/market/{symbol}/insiders")
+def market_insiders(
+    symbol: str,
+    days: int = Query(default=90, ge=7, le=365),
+    service: InsiderService = Depends(insider_service),
+) -> dict:
+    return _sec_call(lambda: service.activity(symbol, days=days))
+
+
+@app.get("/api/market/{symbol}/peers")
+def market_peers(symbol: str, service: PeerService = Depends(peer_service)) -> dict:
+    return _sec_call(lambda: service.comparison(symbol))
+
+
+@app.put("/api/market/{symbol}/peers", dependencies=[Depends(require_local_write)])
+def update_market_peers(
+    symbol: str, request: PeerUpdate, service: PeerService = Depends(peer_service)
+) -> dict:
+    _sec_call(lambda: service.set_peers(symbol, request.symbols))
+    return _sec_call(lambda: service.comparison(symbol))
+
+
+@app.delete("/api/market/{symbol}/peers", dependencies=[Depends(require_local_write)])
+def reset_market_peers(symbol: str, service: PeerService = Depends(peer_service)) -> dict:
+    _sec_call(lambda: service.reset(symbol))
+    return _sec_call(lambda: service.comparison(symbol))
 
 
 @app.get("/api/watchlist")

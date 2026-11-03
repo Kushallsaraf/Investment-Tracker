@@ -10,7 +10,7 @@ explicit "not available" states, and no trading actions.
 - **Chart.** Cached daily Yahoo history, TradingView candle/line chart, overlays,
   RSI/MACD pane, and a Python-computed technical setup panel.
 
-## Phase 3: SEC EDGAR data
+## Phase 3: SEC EDGAR data (built; pending a live check against SEC)
 
 - Map tickers to SEC CIKs from `company_tickers.json`; send the User-Agent with a
   contact email that SEC requires, read from local configuration.

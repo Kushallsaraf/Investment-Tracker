@@ -7,10 +7,13 @@ import type {
   ChartRange,
   ClaudePrompt,
   DecisionName,
+  Fundamentals,
   HistoryPoint,
   IncomePayload,
+  InsiderActivity,
   InvestmentProfile,
   JournalPayload,
+  PeerComparison,
   Portfolio,
   PortfolioStatus,
   PositionInput,
@@ -269,6 +272,33 @@ export async function addToWatchlist(symbol: string): Promise<void> {
 
 export async function removeFromWatchlist(symbol: string): Promise<void> {
   await responseJson(await fetch(`/api/watchlist/${encodeURIComponent(symbol)}`, {
+    method: "DELETE",
+    headers: WRITE_HEADERS,
+  }));
+}
+
+export async function getFundamentals(symbol: string): Promise<Fundamentals> {
+  return responseJson<Fundamentals>(await fetch(`/api/market/${encodeURIComponent(symbol)}/fundamentals`));
+}
+
+export async function getInsiderActivity(symbol: string): Promise<InsiderActivity> {
+  return responseJson<InsiderActivity>(await fetch(`/api/market/${encodeURIComponent(symbol)}/insiders?days=90`));
+}
+
+export async function getPeers(symbol: string): Promise<PeerComparison> {
+  return responseJson<PeerComparison>(await fetch(`/api/market/${encodeURIComponent(symbol)}/peers`));
+}
+
+export async function savePeers(symbol: string, symbols: string[]): Promise<PeerComparison> {
+  return responseJson<PeerComparison>(await fetch(`/api/market/${encodeURIComponent(symbol)}/peers`, {
+    method: "PUT",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify({ symbols }),
+  }));
+}
+
+export async function resetPeers(symbol: string): Promise<PeerComparison> {
+  return responseJson<PeerComparison>(await fetch(`/api/market/${encodeURIComponent(symbol)}/peers`, {
     method: "DELETE",
     headers: WRITE_HEADERS,
   }));

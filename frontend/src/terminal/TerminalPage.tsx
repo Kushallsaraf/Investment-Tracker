@@ -4,6 +4,7 @@ import { DataPanel } from "../components/ui";
 import { dateOnly, price, signedPercent, timestamp } from "../lib/format";
 import type { ChartPayload, ChartRange, Technicals, WatchlistItem } from "../types";
 import { type ChartType, type LowerPane, type Overlay, OVERLAY_LABELS, PriceChart } from "./PriceChart";
+import { FundamentalsPanel, InsiderPanel, PeersPanel } from "./SecPanels";
 
 const RANGES: ChartRange[] = ["1M", "3M", "6M", "1Y", "5Y", "MAX"];
 const OVERLAYS = Object.keys(OVERLAY_LABELS) as Overlay[];
@@ -155,15 +156,17 @@ export function TerminalPage({ symbol, onOpenSymbol }: { symbol: string; onOpenS
       ]} />
       <div className="terminal-row">
         <TechnicalPanel data={technicals} />
-        <PlannedPanel title="Fundamentals" meta="SEC EDGAR" source="Company 10-K and 10-Q filings" lines={["Market cap, valuation multiples, growth, margins, free cash flow and debt.", "Valuation compared with the company's own history.", "ETFs show top holdings instead."]} />
+        <FundamentalsPanel symbol={symbol} />
+        <InsiderPanel symbol={symbol} />
+      </div>
+      <div className="terminal-row">
+        <PeersPanel symbol={symbol} onOpenSymbol={onOpenSymbol} />
         <PlannedPanel title="News and sentiment" meta="RSS · 8-K" source="Headline feeds and SEC filings · FinBERT scoring" lines={["Latest headlines and filings for this ticker.", "Each headline scored positive, neutral or negative, with a 7-day trend."]} />
       </div>
       <div className="terminal-row">
-        <PlannedPanel title="Insider activity" meta="SEC FORM 4" source="Insider buys and sells, last 90 days" lines={["Who bought or sold, how much, and whether it was a pre-planned sale.", "Net insider buying or selling over the period."]} />
-        <PlannedPanel title="Peers" meta="EDITABLE LIST" source="Seeded from the SEC industry code" lines={["Valuation and growth side by side with competitors.", "Add or remove peers yourself."]} />
         <PlannedPanel title={`My notes · ${symbol}`} meta="LOCAL" source="Saved on this computer" lines={["Notes for this ticker, optionally pinned to a date on the chart."]} />
+        <PlannedPanel className="span-2" title="Macro and markets" meta="DAILY" source="Sector ETFs · FRED economic data" lines={["Sector heatmap, Fed funds rate, yield curve, inflation and this week's economic calendar."]} />
       </div>
-      <PlannedPanel title="Macro and markets" meta="DAILY" source="Sector ETFs · FRED economic data" lines={["Sector heatmap, Fed funds rate, yield curve, inflation and this week's economic calendar."]} />
     </div>
   );
 }

@@ -54,9 +54,19 @@ ticker search (`⌘K`, `Ctrl K`, or `/`) or the watchlist.
 - Technical setup describes trend, RSI, MACD, 52-week range position, 3-month
   strength against SPY, ATR, a 2× ATR stop level, and relative volume. Every
   indicator is calculated in Python; nothing is a signal or forecast.
-- The AI analyst, strategy scanner, fundamentals, news and sentiment, insider
-  activity, peers, notes, and macro panels are placeholders until their data
-  sources are connected.
+- Fundamentals come from SEC EDGAR company facts (10-K and 10-Q): market cap,
+  P/E, P/S, EV/EBITDA, free-cash-flow yield, growth, margins, net cash, and P/E and
+  P/S compared with the company's own five-year range. Trailing-twelve-month values
+  are built from quarterly filings, deriving quarters from year-to-date figures where
+  needed. ETFs show "not applicable" because they don't file company financials.
+- Insider activity reads Form 4 filings from the last 90 days. Open-market buys and
+  sales are totaled; grants, exercises, and tax withholding are listed but excluded,
+  and pre-planned 10b5-1 sales are marked.
+- Peers are seeded from the company's SEC industry code (larger companies first) and
+  can be edited or reset. The table compares valuation, growth, margins, and
+  3-month return.
+- The AI analyst, strategy scanner, news and sentiment, notes, and macro panels are
+  placeholders until their data sources are connected.
 
 **Portfolio** keeps the holdings workspace in eight sub-views:
 
@@ -108,6 +118,21 @@ To run all tests and the production frontend build:
 ```bash
 ./scripts/test
 ```
+
+## SEC EDGAR setup
+
+SEC asks automated clients to identify themselves. Fundamentals, insider activity,
+and peers stay unavailable until you set a name and contact email, either in your
+shell or in a local `.env` file (ignored by Git), which `./scripts/dev` loads:
+
+```bash
+PORTFOLIO_MANAGER_SEC_USER_AGENT="Jane Doe jane@example.com"
+```
+
+Requests are limited to under 10 per second as SEC requires. Company facts and
+filings are cached in SQLite (facts for 24 hours, filing lists for 12 hours, parsed
+Form 4 filings permanently), and an expired copy is shown, marked stale, if SEC
+can't be reached.
 
 ## Local data controls
 

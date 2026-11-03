@@ -447,3 +447,110 @@ export type WatchlistItem = QuoteChange & {
   added_at: string;
   stale: boolean;
 };
+
+export type DatedMetric = { value: number | null; as_of: string | null; note: string | null };
+
+export type ValuationBand = {
+  metric: string;
+  status: "available" | "not_available";
+  current: number | null;
+  min?: number;
+  median?: number;
+  max?: number;
+  percentile?: number;
+  observations?: number;
+  start?: string | null;
+  end?: string | null;
+  note?: string;
+};
+
+type NotApplicable = { symbol: string; applicable: false; reason: string; source: string };
+
+export type Fundamentals = NotApplicable | {
+  symbol: string;
+  name: string;
+  applicable: true;
+  cik: number;
+  sec_name: string;
+  sic: string | null;
+  sic_description: string | null;
+  latest_filing: { form: string; filed: string; period: string | null; url: string } | null;
+  price: DatedMetric;
+  period: { ttm_end: string | null; latest_quarter_end: string | null };
+  valuation: Record<"market_cap" | "enterprise_value" | "pe_ttm" | "ps_ttm" | "ev_ebitda" | "pb" | "fcf_yield", DatedMetric>;
+  growth: Record<"revenue_ttm_yoy" | "revenue_quarter_yoy" | "net_income_ttm_yoy", DatedMetric>;
+  profitability: Record<"gross_margin" | "operating_margin" | "net_margin" | "fcf_margin", DatedMetric>;
+  ttm: Record<"revenue" | "net_income" | "free_cash_flow" | "ebitda", DatedMetric>;
+  balance_sheet: Record<"cash" | "debt" | "net_cash" | "debt_to_equity" | "shares_outstanding", DatedMetric>;
+  valuation_history: { pe: ValuationBand; ps: ValuationBand };
+  annual: Array<{ fiscal_year_end: string; revenue: number; net_income: number | null; free_cash_flow: number | null }>;
+  notes: string[];
+  source: string;
+  fetched_at: string;
+  stale: boolean;
+};
+
+export type InsiderTransaction = {
+  filed: string;
+  date: string | null;
+  owner: string;
+  role: string;
+  code: string | null;
+  description: string;
+  shares: number | null;
+  price: number | null;
+  value: number | null;
+  acquired_disposed: string | null;
+  planned_10b5_1: boolean;
+  shares_after: number | null;
+  url: string;
+};
+
+export type InsiderActivity = NotApplicable | {
+  symbol: string;
+  applicable: true;
+  days: number;
+  since: string;
+  filings: number;
+  summary: {
+    purchase_value: number;
+    sale_value: number;
+    net_value: number;
+    buyers: number;
+    sellers: number;
+    planned_sale_value: number;
+    other_transactions: number;
+  };
+  transactions: InsiderTransaction[];
+  latest_filing: string | null;
+  source: string;
+  fetched_at: string;
+  stale: boolean;
+  warnings: string[];
+};
+
+export type PeerRow = {
+  symbol: string;
+  name?: string;
+  available: boolean;
+  reason?: string | null;
+  market_cap?: number | null;
+  pe_ttm?: number | null;
+  ps_ttm?: number | null;
+  ev_ebitda?: number | null;
+  revenue_growth?: number | null;
+  operating_margin?: number | null;
+  return_3m?: number | null;
+  ttm_end?: string | null;
+};
+
+export type PeerComparison = NotApplicable | {
+  symbol: string;
+  applicable: true;
+  peers: string[];
+  list_source: "SIC" | "USER";
+  sic: string | null;
+  sic_description: string | null;
+  rows: PeerRow[];
+  source: string;
+};

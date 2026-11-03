@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import pytest
 from app.database import Database
 from app.journal_repository import JournalRepository
@@ -10,22 +11,31 @@ from app.main import (
     activity_service,
     analytics_service,
     app,
+    fundamentals_service,
+    insider_service,
     journal_service,
     market_service,
+    peer_service,
     portfolio_service,
     research_service,
     sector_service,
 )
 from app.market_repository import MarketRepository
+from app.providers.sec import SecClient
 from app.repository import PortfolioRepository
+from app.sec_repository import SecRepository
 from app.services.activities import ActivityService
 from app.services.analytics import AnalyticsService
+from app.services.fundamentals import FundamentalsService
+from app.services.insiders import InsiderService
 from app.services.journal import JournalService
 from app.services.market import MarketService
+from app.services.peers import PeerService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
+from app.services.sec_data import SecDataService
 from app.services.sectors import SectorService
-from fakes import FakeHistory, FakePrices, listing, synthetic_bars
+from fakes import FakeHistory, FakePrices, FakeSec, listing, synthetic_bars
 from fastapi.testclient import TestClient
 
 WRITE = {"X-Portfolio-Manager": "local-ui"}
@@ -55,6 +65,12 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     )
     market = MarketService(MarketRepository(repository.database), provider=history)
     app.dependency_overrides[market_service] = lambda: market
+    sec_repository = SecRepository(repository.database)
+    sec = SecDataService(sec_repository, FakeSec())
+    fundamentals = FundamentalsService(sec, market)
+    app.dependency_overrides[fundamentals_service] = lambda: fundamentals
+    app.dependency_overrides[insider_service] = lambda: InsiderService(sec, market)
+    app.dependency_overrides[peer_service] = lambda: PeerService(sec, market, fundamentals, sec_repository)
     client = TestClient(app)
     client.history = history  # type: ignore[attr-defined]
     yield client
@@ -171,7 +187,6 @@ def test_demo_portfolio_and_activity_ledger(client: TestClient) -> None:
     assert "CAD" not in pack["markdown"]
 
 
-
 def test_market_routes_return_chart_technicals_and_watchlist(client: TestClient) -> None:
     chart = client.get("/api/market/acme/chart", params={"range": "3M"})
     assert chart.status_code == 200
@@ -198,3 +213,51 @@ def test_market_routes_return_chart_technicals_and_watchlist(client: TestClient)
     assert "Market data is unavailable" in outage.json()["detail"]
     strip = client.get("/api/market/strip").json()
     assert len(strip["items"]) == 10
+
+
+def test_sec_routes_return_fundamentals_insiders_and_editable_peers(client: TestClient) -> None:
+    fundamentals = client.get("/api/market/ACME/fundamentals").json()
+    assert fundamentals["applicable"] is True
+    assert fundamentals["ttm"]["revenue"]["value"] == 790.0
+    insiders = client.get("/api/market/ACME/insiders", params={"days": 90})
+    assert insiders.status_code == 200
+    assert insiders.json()["summary"]["buyers"] >= 0
+    assert client.get("/api/market/ACME/insiders", params={"days": 2}).status_code == 422
+    peers = client.get("/api/market/ACME/peers").json()
+    assert peers["list_source"] == "SIC"
+    assert client.put("/api/market/ACME/peers", json={"symbols": ["SPY"]}).status_code == 403
+    edited = client.put("/api/market/ACME/peers", headers=WRITE, json={"symbols": ["spy"]}).json()
+    assert edited["peers"] == ["SPY"]
+    assert edited["list_source"] == "USER"
+    assert client.request("DELETE", "/api/market/ACME/peers", headers=WRITE).json()["list_source"] == "SIC"
+    missing = client.get("/api/market/SPY/fundamentals").json()
+    assert missing["applicable"] is False
+
+
+def test_sec_routes_explain_missing_configuration_and_unknown_filers(
+    client: TestClient, tmp_path: Path
+) -> None:
+    unconfigured = SecDataService(SecRepository(Database(tmp_path / "unconfigured.sqlite3")), SecClient(None))
+    market = app.dependency_overrides[market_service]()
+    app.dependency_overrides[fundamentals_service] = lambda: FundamentalsService(unconfigured, market)
+    response = client.get("/api/market/ACME/fundamentals")
+    assert response.status_code == 503
+    assert "PORTFOLIO_MANAGER_SEC_USER_AGENT" in response.json()["detail"]
+
+    sec_client = FakeSec()
+    sec_client.tickers = [row for row in sec_client.tickers if row["ticker"] != "ACME"]
+    sec = SecDataService(SecRepository(Database(tmp_path / "missing.sqlite3")), sec_client)
+    app.dependency_overrides[fundamentals_service] = lambda: FundamentalsService(sec, market)
+    not_found = client.get("/api/market/ACME/fundamentals")
+    assert not_found.status_code == 404
+    assert "not in SEC's list" in not_found.json()["detail"]
+
+    class Offline(FakeSec):
+        def company_tickers(self):  # type: ignore[override]
+            raise httpx.ConnectError("nodename nor servname provided")
+
+    offline = SecDataService(SecRepository(Database(tmp_path / "offline.sqlite3")), Offline())
+    app.dependency_overrides[fundamentals_service] = lambda: FundamentalsService(offline, market)
+    outage = client.get("/api/market/ACME/fundamentals")
+    assert outage.status_code == 502
+    assert "Couldn't reach SEC EDGAR" in outage.json()["detail"]

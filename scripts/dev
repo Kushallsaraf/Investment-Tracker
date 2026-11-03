@@ -4,6 +4,14 @@ set -eu
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PATH="/opt/homebrew/bin:$PATH"
 export PATH
+
+# Optional local settings such as PORTFOLIO_MANAGER_SEC_USER_AGENT; .env is ignored by Git.
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a
+  . "$PROJECT_DIR/.env"
+  set +a
+fi
+
 BACKEND_PID=""
 
 cleanup() {

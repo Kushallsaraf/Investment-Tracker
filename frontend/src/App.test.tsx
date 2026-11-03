@@ -107,6 +107,42 @@ const technicals = {
   atr14: 2.1, atr_pct: 0.016, atr_stop: 125.8, volume_ratio: 1.62, source: "Yahoo Finance chart (daily)", stale: false,
 };
 
+const metric = (value: number | null, note: string | null = null) => ({ value, as_of: "2026-06-30", note: value == null ? note ?? "Not available" : null });
+const fundamentals = {
+  symbol: "SPY", name: "SPY Synthetic Inc.", applicable: true, cik: 1234, sec_name: "SYNTHETIC CORP", sic: "3674",
+  sic_description: "Semiconductors & Related Devices",
+  latest_filing: { form: "10-Q", filed: "2026-08-05", period: "2026-06-30", url: "https://www.sec.gov/Archives/edgar/data/1234/x-index.htm" },
+  price: metric(130), period: { ttm_end: "2026-06-30", latest_quarter_end: "2026-06-30" },
+  valuation: { market_cap: metric(4.5e12), enterprise_value: metric(4.4e12), pe_ttm: metric(52.3), ps_ttm: metric(25.1), ev_ebitda: metric(null, "EBITDA negative or unavailable"), pb: metric(40), fcf_yield: metric(0.019) },
+  growth: { revenue_ttm_yoy: metric(0.62), revenue_quarter_yoy: metric(0.55), net_income_ttm_yoy: metric(0.8) },
+  profitability: { gross_margin: metric(0.73), operating_margin: metric(0.6), net_margin: metric(0.5), fcf_margin: metric(0.45) },
+  ttm: { revenue: metric(1.8e11), net_income: metric(9e10), free_cash_flow: metric(8e10), ebitda: metric(1.1e11) },
+  balance_sheet: { cash: metric(5e10), debt: metric(1e10), net_cash: metric(4e10), debt_to_equity: metric(0.1), shares_outstanding: metric(2.4e10) },
+  valuation_history: {
+    pe: { metric: "P/E", status: "available", current: 52.3, min: 30, median: 55, max: 120, percentile: 0.4, observations: 20, start: "2021-09-30", end: "2026-06-30" },
+    ps: { metric: "P/S", status: "not_available", current: 25.1, note: "Needs at least 8 quarters of positive history" },
+  },
+  annual: [], notes: ["Capital expenditures were not reported under the standard concept."],
+  source: "SEC EDGAR", fetched_at: "2026-10-26T20:00:00Z", stale: false,
+};
+const insiders = {
+  symbol: "SPY", applicable: true, days: 90, since: "2026-07-28", filings: 3,
+  summary: { purchase_value: 50000, sale_value: 149000, net_value: -99000, buyers: 1, sellers: 2, planned_sale_value: 149000, other_transactions: 0 },
+  transactions: [
+    { filed: "2026-10-03", date: "2026-10-01", owner: "Jane Doe", role: "CFO", code: "P", description: "Open-market purchase", shares: 1000, price: 50, value: 50000, acquired_disposed: "A", planned_10b5_1: false, shares_after: 5000, url: "https://www.sec.gov/a-index.htm" },
+    { filed: "2026-09-20", date: "2026-09-18", owner: "John Roe", role: "CEO", code: "S", description: "Open-market sale", shares: 2000, price: 60, value: 120000, acquired_disposed: "D", planned_10b5_1: true, shares_after: 5000, url: "https://www.sec.gov/b-index.htm" },
+  ],
+  latest_filing: "2026-10-03", source: "SEC EDGAR Form 4 filings", fetched_at: "2026-10-26T20:00:00Z", stale: false, warnings: [],
+};
+const peers = {
+  symbol: "SPY", applicable: true, peers: ["AMD"], list_source: "SIC", sic: "3674", sic_description: "Semiconductors & Related Devices",
+  rows: [
+    { symbol: "SPY", name: "SYNTHETIC CORP", available: true, market_cap: 4.5e12, pe_ttm: 52.3, ps_ttm: 25.1, ev_ebitda: 40, revenue_growth: 0.62, operating_margin: 0.6, return_3m: 0.05, ttm_end: "2026-06-30" },
+    { symbol: "AMD", name: "ADVANCED MICRO DEVICES", available: false, reason: "Not available (RuntimeError)", return_3m: -0.02 },
+  ],
+  source: "SEC EDGAR",
+};
+
 function response(body: unknown, code = 200) {
   return new Response(JSON.stringify(body), { status: code, headers: { "Content-Type": "application/json" } });
 }
@@ -128,6 +164,12 @@ function createFetch(overrides: Record<string, unknown> = {}) {
       return response(chartPayload(symbol, chartMatch[2]));
     }
     if (/^\/api\/market\/[^/]+\/technicals$/.test(url)) return response(technicals);
+    if (/^\/api\/market\/[^/]+\/fundamentals$/.test(url)) return response(fundamentals);
+    if (/^\/api\/market\/[^/]+\/insiders\?days=90$/.test(url)) return response(insiders);
+    if (/^\/api\/market\/[^/]+\/peers$/.test(url)) {
+      if (method === "PUT") return response({ ...peers, peers: JSON.parse(String(init?.body)).symbols, list_source: "USER" });
+      return response(peers);
+    }
     if (url === "/api/watchlist" && method === "GET") return response({ items: [], source: "Yahoo" });
     if (url === "/api/portfolio/history") return response({ history: [] });
     if (url === "/api/portfolio/sectors") return response({ status: "ok", analysis: sectors });
@@ -194,7 +236,7 @@ describe("Investment Tracker", () => {
     for (const title of ["AI analyst", "Strategy scanner", "Fundamentals", "News and sentiment", "Insider activity", "Peers", "Macro and markets"]) {
       expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
     }
-    expect(screen.getAllByText("Not connected yet").length).toBeGreaterThan(5);
+    expect(screen.getAllByText("Not connected yet")).toHaveLength(5);
     expect(window.location.hash).toBe("#terminal/SPY");
   });
 
@@ -219,6 +261,45 @@ describe("Investment Tracker", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/watchlist", expect.objectContaining({ method: "POST", body: JSON.stringify({ symbol: "BRK.B" }) }),
     ));
+  });
+
+  it("shows SEC fundamentals, insider activity and editable peers", async () => {
+    const fetchMock = createFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await screen.findByText("Gross margin");
+    const fundamentalsPanel = within(screen.getByRole("heading", { name: "Fundamentals" }).closest("section") as HTMLElement);
+    expect(fundamentalsPanel.getByText("$4.5T")).toBeInTheDocument();
+    expect(fundamentalsPanel.getAllByText("52.3×").length).toBeGreaterThan(0);
+    expect(fundamentalsPanel.getByText("+62.0%")).toBeInTheDocument();
+    expect(fundamentalsPanel.getByTitle("EBITDA negative or unavailable")).toHaveTextContent("N/A");
+    expect(screen.getByRole("img", { name: "P/E 52.3×, 40th percentile of 20 quarters" })).toBeInTheDocument();
+    expect(screen.getByText(/Needs at least 8 quarters/)).toBeInTheDocument();
+    expect(screen.getByText("LATEST 10-Q · FILED Aug 5, 2026")).toHaveAttribute("href", fundamentals.latest_filing.url);
+    expect(screen.getByText("$50K · 1 buyer")).toBeInTheDocument();
+    expect(screen.getByText("Open-market sale · 10b5-1")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Jane Doe" })).toHaveAttribute("href", "https://www.sec.gov/a-index.htm");
+    expect(screen.getByText("Not available (RuntimeError)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "EDIT PEERS" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Peer tickers" }), { target: { value: "tsm, umc" } });
+    fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/market/SPY/peers", expect.objectContaining({ method: "PUT", body: JSON.stringify({ symbols: ["TSM", "UMC"] }) }),
+    ));
+    expect(await screen.findByText("YOUR LIST")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "AMD" }));
+    expect(await screen.findByRole("heading", { name: "AMD" })).toBeInTheDocument();
+  });
+
+  it("explains when SEC EDGAR is not configured", async () => {
+    const fetchMock = createFetch();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+      String(input).endsWith("/fundamentals")
+        ? response({ detail: "SEC EDGAR needs a contact. Set PORTFOLIO_MANAGER_SEC_USER_AGENT to your name and email." }, 503)
+        : fetchMock(input, init)
+    )));
+    render(<App />);
+    expect(await screen.findByText(/Set PORTFOLIO_MANAGER_SEC_USER_AGENT/)).toBeInTheDocument();
   });
 
   it("explains when a ticker cannot be loaded", async () => {

@@ -297,6 +297,25 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         );
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE IF NOT EXISTS sec_cache (
+            cache_key TEXT PRIMARY KEY,
+            fetched_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS peer_lists (
+            symbol TEXT PRIMARY KEY,
+            peers_json TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('SIC', 'USER')),
+            sic TEXT,
+            sic_description TEXT,
+            updated_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

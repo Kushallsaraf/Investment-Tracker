@@ -22,6 +22,7 @@ class Settings:
     database_path: Path
     host: str
     port: int
+    sec_user_agent: str | None
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -33,6 +34,8 @@ class Settings:
             database_path=runtime_root / "portfolio.sqlite3",
             host=os.getenv("PORTFOLIO_MANAGER_HOST", "127.0.0.1").strip() or "127.0.0.1",
             port=int(os.getenv("PORTFOLIO_MANAGER_PORT", "8742")),
+            # SEC asks automated clients to identify themselves with a name and contact email.
+            sec_user_agent=os.getenv("PORTFOLIO_MANAGER_SEC_USER_AGENT", "").strip() or None,
         )
 
 

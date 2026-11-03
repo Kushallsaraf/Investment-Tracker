@@ -54,6 +54,10 @@ class WatchlistAdd(BaseModel):
     symbol: str = Field(min_length=1, max_length=12)
 
 
+class PeerUpdate(BaseModel):
+    symbols: list[str] = Field(default_factory=list, max_length=10)
+
+
 class LoadDemoRequest(BaseModel):
     confirm: Literal["LOAD DEMO"]
 
