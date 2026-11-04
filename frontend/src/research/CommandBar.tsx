@@ -42,11 +42,11 @@ export function CommandBar({
   return (
     <search className="command-search">
       <form className="command-bar" onSubmit={submit}>
-        <span aria-hidden="true">›</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
         <input
           ref={input}
           aria-label="Ticker search"
-          placeholder="Ticker, e.g. AAPL or VOO"
+          placeholder="Search a ticker"
           value={value}
           maxLength={12}
           autoComplete="off"

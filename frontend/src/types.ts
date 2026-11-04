@@ -328,6 +328,8 @@ export type JournalPayload = {
     symbol: string;
     trigger_type: string;
     state: string;
+    exit_plan_id?: string | null;
+    exit_plan_reasoning?: string | null;
   }>;
   generated_at: string;
 };
@@ -567,10 +569,36 @@ export type Note = {
   updated_at: string;
 };
 
+export type ExitPlanStatus = "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
+
+export type ExitPlan = {
+  id: string;
+  symbol: string;
+  target_price: string | null;
+  stop_price: string | null;
+  review_date: string | null;
+  reasoning: string;
+  proposed_by: "CLAUDE" | "USER";
+  status: ExitPlanStatus;
+  reference_price: string | null;
+  reference_date: string | null;
+  note_id: string | null;
+  created_at: string;
+  decided_at: string | null;
+};
+
+export type ExitPlanInput = {
+  target_price: string | null;
+  stop_price: string | null;
+  review_date: string | null;
+  reasoning: string;
+};
+
 export type SymbolJournal = {
   symbol: string;
   instrument_id: string | null;
   decision: CurrentDecision | null;
   triggers: ReviewTrigger[];
   notes: Note[];
+  exit_plans: ExitPlan[];
 };

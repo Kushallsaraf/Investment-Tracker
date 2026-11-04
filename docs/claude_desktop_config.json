@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "investment-tracker": {
+      "command": "/ABSOLUTE/PATH/TO/Portfolio-Manager/.venv/bin/python",
+      "args": ["-m", "app.mcp_server"],
+      "env": {
+        "PYTHONPATH": "/ABSOLUTE/PATH/TO/Portfolio-Manager/backend",
+        "PORTFOLIO_MANAGER_SEC_USER_AGENT": "Your Name your.email@example.com"
+      }
+    }
+  }
+}

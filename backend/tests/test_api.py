@@ -11,6 +11,7 @@ from app.main import (
     activity_service,
     analytics_service,
     app,
+    exit_plan_service,
     fundamentals_service,
     insider_service,
     journal_service,
@@ -26,6 +27,7 @@ from app.repository import PortfolioRepository
 from app.sec_repository import SecRepository
 from app.services.activities import ActivityService
 from app.services.analytics import AnalyticsService
+from app.services.exit_plans import ExitPlanService
 from app.services.fundamentals import FundamentalsService
 from app.services.insiders import InsiderService
 from app.services.journal import JournalService
@@ -66,6 +68,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     app.dependency_overrides[market_service] = lambda: market
     journal = JournalService(journal_repository, repository, market=market)
     app.dependency_overrides[journal_service] = lambda: journal
+    exit_plans = ExitPlanService(journal_repository, journal)
+    client_exit_plans = exit_plans
+    app.dependency_overrides[exit_plan_service] = lambda: client_exit_plans
     sec_repository = SecRepository(repository.database)
     sec = SecDataService(sec_repository, FakeSec())
     fundamentals = FundamentalsService(sec, market)
@@ -74,6 +79,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     app.dependency_overrides[peer_service] = lambda: PeerService(sec, market, fundamentals, sec_repository)
     client = TestClient(app)
     client.history = history  # type: ignore[attr-defined]
+    client.exit_plans = exit_plans  # type: ignore[attr-defined]
     yield client
     app.dependency_overrides.clear()
 
@@ -266,7 +272,14 @@ def test_sec_routes_explain_missing_configuration_and_unknown_filers(
 
 def test_symbol_journal_decision_and_note_routes(client: TestClient) -> None:
     empty = client.get("/api/market/acme/journal").json()
-    assert empty == {"symbol": "ACME", "instrument_id": None, "decision": None, "triggers": [], "notes": []}
+    assert empty == {
+        "symbol": "ACME",
+        "instrument_id": None,
+        "decision": None,
+        "triggers": [],
+        "notes": [],
+        "exit_plans": [],
+    }
 
     decision = {"decision": "WATCH", "decision_date": "2026-10-20", "reason": "Waiting for a pullback"}
     assert client.post("/api/market/ACME/decision", json=decision).status_code == 403
@@ -295,3 +308,28 @@ def test_symbol_journal_decision_and_note_routes(client: TestClient) -> None:
     assert client.delete(f"/api/notes/{created['id']}", headers=WRITE).status_code == 404
     assert client.put("/api/notes/missing", headers=WRITE, json={"body": "x"}).status_code == 404
     assert client.get("/api/market/XIC.TO/journal").status_code == 422
+
+
+def test_exit_plan_routes_accept_only_from_the_local_ui(client: TestClient) -> None:
+    service: ExitPlanService = client.exit_plans  # type: ignore[attr-defined]
+    proposal = service.propose("ACME", target_price="400", stop_price="200", reasoning="Claude's levels.")
+    queue = client.get("/api/exit-plans", params={"status": "PROPOSED"}).json()["plans"]
+    assert [row["id"] for row in queue] == [proposal["id"]]
+    assert client.get("/api/exit-plans", params={"status": "OPEN"}).status_code == 422
+
+    assert client.post(f"/api/exit-plans/{proposal['id']}/accept").status_code == 403
+    accepted = client.post(f"/api/exit-plans/{proposal['id']}/accept", headers=WRITE).json()["plan"]
+    assert accepted["status"] == "ACCEPTED"
+    again = client.post(f"/api/exit-plans/{proposal['id']}/reject", headers=WRITE)
+    assert (again.status_code, again.json()["detail"]) == (422, "This exit plan is already accepted")
+    assert client.post("/api/exit-plans/missing/accept", headers=WRITE).status_code == 404
+
+    journal = client.get("/api/market/ACME/journal").json()
+    assert {row["trigger_type"] for row in journal["triggers"]} == {"PRICE_ABOVE", "PRICE_BELOW"}
+
+    own = {"target_price": "450", "reasoning": "My own target."}
+    assert client.post("/api/market/ACME/exit-plans", json=own).status_code == 403
+    mine = client.post("/api/market/ACME/exit-plans", headers=WRITE, json=own).json()["plan"]
+    assert (mine["status"], mine["proposed_by"]) == ("ACCEPTED", "USER")
+    bad = client.post("/api/market/ACME/exit-plans", headers=WRITE, json={"reasoning": "No levels."})
+    assert bad.status_code == 422

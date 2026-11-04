@@ -9,6 +9,9 @@ explicit "not available" states, and no trading actions.
 - **Terminal shell.** Terminal and Portfolio tabs, ticker search, market strip, watchlist.
 - **Chart.** Cached daily Yahoo history, TradingView candle/line chart, overlays,
   RSI/MACD pane, and a Python-computed technical setup panel.
+- **Redesign.** The Terminal tab is now Research. The Graphite theme puts the chart
+  first with six summary cards, and detail (and every Portfolio view) opens in
+  side drawers.
 
 ## Phase 3: SEC EDGAR data (built and checked against live SEC data)
 
@@ -32,7 +35,7 @@ explicit "not available" states, and no trading actions.
 
 Moved ahead of news and macro because the MCP server depends on notes.
 
-## Phase 5: Exit plans and the Claude Desktop MCP server
+## Phase 5: Exit plans and the Claude Desktop MCP server (5a and 5b built)
 
 Depends on: chart and technical setup (done), fundamentals and peers (Phase 3),
 notes and shared identity (Phase 4), the existing decision journal and review triggers.
@@ -54,7 +57,7 @@ hosted demo. The in-app AI analyst panel (Ollama plus a free cloud tier) is unch
   - Records a decision-history entry with `claude_disposition = ACCEPTED`.
   - Rejected proposals stay in history for reference.
 - Accepted target and stop are drawn as price lines on the chart. Proposals appear
-  in an Exit plan panel on the Terminal and a review queue in Portfolio → Decisions.
+  in an Exit plan panel on Research and a review queue in Portfolio → Decisions.
 - **Trigger evaluation from cached daily bars**, not only holding valuations, so
   watchlist tickers are covered. When a level is crossed or the review date
   arrives, the alert shows the original reasoning.
@@ -87,7 +90,7 @@ hosted demo. The in-app AI analyst panel (Ollama plus a free cloud tier) is unch
   providers; assert as-of fields, `NOT AVAILABLE` markers, and that write tools can
   only create proposals.
 
-### 5c. Optional daily price check
+### 5c. Optional daily price check (not started)
 
 - A `portfolio-manager-check` command refreshes daily bars for symbols with active
   triggers, evaluates them, and sends a macOS notification (`osascript`) with the

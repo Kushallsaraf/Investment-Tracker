@@ -63,6 +63,13 @@ class NoteCreate(BaseModel):
     pinned_date: date | None = None
 
 
+class ExitPlanCreate(BaseModel):
+    target_price: str | None = Field(default=None, max_length=32)
+    stop_price: str | None = Field(default=None, max_length=32)
+    review_date: str | None = Field(default=None, max_length=10)
+    reasoning: str = Field(min_length=1, max_length=10_000)
+
+
 class LoadDemoRequest(BaseModel):
     confirm: Literal["LOAD DEMO"]
 

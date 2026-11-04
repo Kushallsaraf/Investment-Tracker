@@ -189,7 +189,7 @@ export function ConfirmationDialog({
         aria-describedby="confirmation-description"
         aria-modal="true"
         className="confirmation-dialog"
-        role="dialog"
+        role="alertdialog"
       >
         <h2 id="confirmation-title">{title}</h2>
         <p id="confirmation-description">{description}</p>

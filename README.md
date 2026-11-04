@@ -17,8 +17,10 @@ and has no order or trading UI.
   timestamped and classified as real-time, delayed, end-of-day, or stale.
 - Only US listings quoted in USD are accepted. Symbols are verified against the
   price provider before they are stored.
-- No Claude or other AI API integration. Research packs leave the application only
-  when you copy or export them.
+- The app itself calls no AI API. The optional Claude Desktop MCP server runs on
+  this computer: Claude can read your research data, add notes and watchlist
+  items, and propose exit plans, which do nothing until you accept them in the
+  dashboard. No tool can place, simulate, or describe an order.
 - Runtime data is stored under `~/.portfolio-manager/` by default with restrictive
   local permissions.
 
@@ -41,57 +43,106 @@ missing and excluded from the total rather than estimated.
 
 ## Interface
 
-The fixed dark interface has two top-level tabs.
+The interface uses one dark theme (Graphite: near-black with a teal accent) and
+two top-level tabs. Detail opens in side drawers, so each screen stays short.
 
-**Terminal** is a single-ticker research screen. Open any US stock or ETF from the
-ticker search (`⌘K`, `Ctrl K`, or `/`) or the watchlist.
+**Research** is a single-ticker screen. Open any US stock or ETF from the ticker
+search (`⌘K`, `Ctrl K`, or `/`) or the watchlist rail. The header shows a short
+market pulse (SPY, QQQ, VIX, and the 10-year yield).
 
-- A market strip shows SPY, QQQ, DIA, IWM, VIX, the 10-year yield, the dollar
-  index, oil, gold, and bitcoin from daily data.
 - The chart uses TradingView Lightweight Charts with candle/line views, 1M–MAX
-  ranges, EMA 20/50, SMA 200, and Bollinger overlays, volume, and an RSI or MACD
-  pane. Daily history is cached in SQLite and refreshed at most every 15 minutes.
-- Technical setup describes trend, RSI, MACD, 52-week range position, 3-month
-  strength against SPY, ATR, a 2× ATR stop level, and relative volume. Every
-  indicator is calculated in Python; nothing is a signal or forecast.
-- Fundamentals come from SEC EDGAR company facts (10-K and 10-Q): market cap,
-  P/E, P/S, EV/EBITDA, free-cash-flow yield, growth, margins, net cash, and P/E and
-  P/S compared with the company's own five-year range. Trailing-twelve-month values
-  are built from quarterly filings, deriving quarters from year-to-date figures where
-  needed. ETFs show "not applicable" because they don't file company financials.
-- Insider activity reads Form 4 filings from the last 90 days. Open-market buys and
-  sales are totaled; grants, exercises, and tax withholding are listed but excluded,
-  and pre-planned 10b5-1 sales are marked.
-- Peers are seeded from the company's SEC industry code (larger companies first) and
-  can be edited or reset. The table compares valuation, growth, margins, and
-  3-month return.
-- Notes are saved per ticker and can be pinned to a date; pinned notes appear as
-  markers on the chart (click a candle to pick its date). The notes panel also
-  records your decision for any ticker, held or not, and lists its open review
-  triggers. Price triggers on tickers you don't hold are checked against the cached
-  daily close.
-- The AI analyst, strategy scanner, news and sentiment, and macro panels are
-  placeholders until their data sources are connected.
+  ranges, an Indicators menu (EMA 20/50, SMA 200, Bollinger, and an RSI or MACD
+  pane), and volume. Daily history is cached in SQLite and refreshed at most every
+  15 minutes. Accepted exit-plan levels are drawn as price lines.
+- Six summary cards open drawers with the detail:
+  - **Trend:** RSI, MACD, 52-week range position, 3-month strength against SPY,
+    ATR, a 2× ATR stop level, and relative volume. Every indicator is calculated
+    in Python; nothing is a signal or forecast.
+  - **Valuation:** SEC EDGAR company facts (10-K and 10-Q): market cap, P/E, P/S,
+    EV/EBITDA, free-cash-flow yield, growth, margins, net cash, and P/E and P/S
+    against the company's own five-year range. Trailing-twelve-month values are
+    built from quarterly filings. ETFs show "not applicable".
+  - **Insiders:** Form 4 filings from the last 90 days. Open-market buys and sales
+    are totaled; grants, exercises, and tax withholding are excluded, and
+    pre-planned 10b5-1 sales are marked.
+  - **Peers:** seeded from the company's SEC industry code and editable, comparing
+    valuation, growth, margins, and 3-month return.
+  - **Notes:** notes per ticker, optionally pinned to a date and shown as chart
+    markers (click a candle to pin a note there), your decision for any ticker
+    (held or not), and its open review triggers.
+  - **Strategies:** a placeholder until the strategy engine lands.
+- **Exit plan** shows Claude's proposals with Accept and Reject, the accepted
+  plan, and a form to write your own. See [Exit plans](#exit-plans).
+- **Ask AI** is a placeholder for the in-app AI panel.
+- **How this works** explains each data source and how fresh it is.
 
-**Portfolio** keeps the holdings workspace in eight sub-views:
+**Portfolio** shows the total value, gain, income, price coverage, a sector
+allocation bar, and the holdings list. Selecting a holding opens its details with
+a link to Research. Toolbar buttons open the detail views as drawers:
 
-- **Overview** shows portfolio totals, data warnings, sector allocation, and the
-  largest holdings. Unsupported return and income figures remain unavailable.
-- **Holdings** is an Excel-style worksheet with an add/update form, saved column
-  preferences, editable stock sectors and decisions, and local row deletion.
+- **Edit holdings** is an Excel-style worksheet with an add/update form, saved
+  column preferences, editable stock sectors and decisions, and local row deletion.
+- **Activity** and **Income** use the local activity ledger.
 - **Analytics** covers deterministic diversification plus explicit missing states
-  for adjusted-return performance, historical risk against the S&P 500 Total
-  Return Index, and issuer-verified ETF look-through.
-- **Income** and **Activity** use the local activity ledger.
-- **Decisions** keeps the investor's decision, thesis, conviction, and review
-  triggers separate from any non-binding Claude suggestion.
-- **Research** exports a privacy-controlled Markdown review pack and imports a
-  Claude response manually. It never calls Claude.
-- **Settings** shows the portfolio data source, quote provider, immutable history,
-  local prompts, the demo loader, and the local data-deletion control.
+  for adjusted-return performance, historical risk, and ETF look-through.
+- **Alerts** (Decisions) keeps your decision, thesis, conviction, and review
+  triggers separate from any non-binding Claude suggestion, and lists exit-plan
+  proposals waiting for review.
+- **AI review packs** export a privacy-controlled Markdown pack and import a Claude
+  response manually.
+- **Settings** shows the data source, quote provider, history, prompts, the demo
+  loader, and the local data-deletion control.
 
 Historical analytics are descriptive, not forecasts, and missing evidence is never
 replaced with a fabricated value.
+
+## Exit plans
+
+An exit plan is a target price, a stop price, and/or a review date, with the
+reasoning behind them.
+
+- **Claude's plans arrive as proposals**, labeled "Proposed by Claude". A new
+  proposal replaces Claude's earlier open proposal for the same ticker.
+- **A proposal changes nothing until you accept it** on the Research screen.
+  Accepting creates review-only triggers (above the target, below the stop, on the
+  review date), saves the reasoning as a dated note, and records the acceptance in
+  decision history. Your decision itself is not changed.
+- **Only one accepted plan per ticker.** Accepting a new plan retires the previous
+  one and dismisses its triggers. Rejected plans stay in the history.
+- **Plans you write yourself** are accepted as soon as you save them.
+- **Alerts quote the reasoning.** Triggers are checked against the cached daily
+  close, so watchlist tickers are covered too. When a level is crossed or the
+  review date arrives, the alert shows the original reasoning. Alerts are reminders
+  to review; they never create orders.
+
+## Claude Desktop (MCP server)
+
+`backend/app/mcp_server.py` is a local [Model Context Protocol](https://modelcontextprotocol.io)
+server for Claude Desktop (it works with a Claude Pro plan). It runs over stdio on
+this computer and uses the same database and services as the dashboard.
+
+- **Read tools:** `get_quote`, `get_chart_summary`, `get_fundamentals`, `get_peers`,
+  `get_insider_activity`, `get_my_notes`, `get_watchlist`, `get_position`. Every
+  response carries as-of dates, and missing values read `NOT AVAILABLE` instead of
+  being left blank.
+- **Write tools:** `add_note`, `add_to_watchlist`, and `save_exit_plan`. The last
+  one only ever saves a proposal.
+- **Prompt:** "Full stock analysis" takes a ticker. Its text lives in
+  `backend/app/prompts/full_stock_analysis.md`; replace it with your own.
+
+To connect it:
+
+1. Install the project (see Development setup), which installs the `mcp` package.
+2. Open Claude Desktop → Settings → Developer → Edit Config, and add the server from
+   [`docs/claude_desktop_config.json`](docs/claude_desktop_config.json), replacing
+   `/ABSOLUTE/PATH/TO/Portfolio-Manager` with this folder's path.
+3. Restart Claude Desktop. "investment-tracker" appears in the tools menu, and
+   "Full stock analysis" in the prompts list.
+
+The server reads the same data folder as the app (`~/.portfolio-manager` unless
+`PORTFOLIO_MANAGER_HOME` is set). If the project lives in Desktop or Documents,
+macOS may ask to give Claude access to that folder. Logs go to Claude Desktop's MCP
+log, never to stdout.
 
 ## Sector allocation
 

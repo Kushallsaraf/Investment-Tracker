@@ -88,12 +88,12 @@ export function NotesPanel({
       className="notes-panel"
       actions={(
         <label className="decision-select">
-          <span>MY DECISION</span>
+          <span>My decision</span>
           <select
             aria-label={`My decision for ${symbol}`}
             value={decision}
             disabled={busy || !journal}
-            onChange={(event) => void run(() => saveSymbolDecision(symbol, event.target.value as DecisionName, "Updated from the Terminal"))}
+            onChange={(event) => void run(() => saveSymbolDecision(symbol, event.target.value as DecisionName, "Updated from Research"))}
           >
             {DECISIONS.map((option) => <option key={option} value={option}>{decisionLabel(option)}</option>)}
           </select>
@@ -103,9 +103,9 @@ export function NotesPanel({
       <form className="note-form" onSubmit={(event) => void submit(event)}>
         <textarea aria-label={`New note for ${symbol}`} placeholder="What are you watching for, and why?" value={body} maxLength={10_000} onChange={(event) => { setBody(event.target.value); setError(null); }} />
         <div className="note-form-row">
-          <label>PIN TO DATE<input aria-label="Pin note to date" type="date" value={pinnedDate} max={today()} onChange={(event) => setPinnedDate(event.target.value)} /></label>
-          {pinnedDate && <button className="action" type="button" onClick={() => setPinnedDate("")}>UNPIN</button>}
-          <button className="action primary" type="submit" disabled={busy}>ADD NOTE</button>
+          <label>Pin to date<input aria-label="Pin note to date" type="date" value={pinnedDate} max={today()} onChange={(event) => setPinnedDate(event.target.value)} /></label>
+          {pinnedDate && <button className="action" type="button" onClick={() => setPinnedDate("")}>Unpin</button>}
+          <button className="action primary" type="submit" disabled={busy}>Add note</button>
         </div>
         <small>Click a candle to pick its date. Pinned notes appear as markers on the chart.</small>
       </form>
@@ -124,7 +124,7 @@ export function NotesPanel({
         {journal?.notes.length === 0 && <li className="panel-note">No notes for {symbol} yet.</li>}
         {journal?.notes.map((note) => <NoteItem key={note.id} note={note} busy={busy} onRun={run} />)}
       </ul>
-      <div className="source-line"><span>SAVED ON THIS COMPUTER</span><span>DECISION {decisionLabel(decision)}{journal?.decision ? ` · ${dateOnly(journal.decision.decision_date)}` : " · DEFAULT"}</span></div>
+      <div className="source-line"><span>Saved on this computer</span><span>DECISION {decisionLabel(decision)}{journal?.decision ? ` · ${dateOnly(journal.decision.decision_date)}` : " · DEFAULT"}</span></div>
     </DataPanel>
   );
 }
@@ -146,9 +146,9 @@ function NoteItem({ note, busy, onRun }: { note: Note; busy: boolean; onRun: (ac
         <form className="note-form" onSubmit={(event) => void save(event)}>
           <textarea aria-label="Edit note" value={body} maxLength={10_000} onChange={(event) => setBody(event.target.value)} />
           <div className="note-form-row">
-            <label>PIN TO DATE<input aria-label="Edit pinned date" type="date" value={pinned} max={today()} onChange={(event) => setPinned(event.target.value)} /></label>
-            <button className="action" type="button" onClick={() => { setEditing(false); setBody(note.body); setPinned(note.pinned_date ?? ""); }}>CANCEL</button>
-            <button className="action primary" type="submit" disabled={busy}>SAVE</button>
+            <label>Pin to date<input aria-label="Edit pinned date" type="date" value={pinned} max={today()} onChange={(event) => setPinned(event.target.value)} /></label>
+            <button className="action" type="button" onClick={() => { setEditing(false); setBody(note.body); setPinned(note.pinned_date ?? ""); }}>Cancel</button>
+            <button className="action primary" type="submit" disabled={busy}>Save</button>
           </div>
         </form>
       </li>

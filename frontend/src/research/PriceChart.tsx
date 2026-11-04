@@ -6,7 +6,10 @@ import {
   createSeriesMarkers,
   HistogramSeries,
   type IChartApi,
+  type IPriceLine,
+  type ISeriesApi,
   type ISeriesMarkersPluginApi,
+  type SeriesType,
   LineSeries,
   LineStyle,
   type MouseEventParams,
@@ -21,6 +24,9 @@ export type ChartType = "candle" | "line";
 export type Overlay = "ema20" | "ema50" | "sma200" | "bollinger";
 export type LowerPane = "rsi" | "macd" | "none";
 
+/** A horizontal level from an exit plan: solid when accepted, dotted while only proposed. */
+export type PriceLevel = { price: number; label: string; kind: "target" | "stop"; proposed: boolean };
+
 export const OVERLAY_LABELS: Record<Overlay, string> = {
   ema20: "EMA 20",
   ema50: "EMA 50",
@@ -29,21 +35,23 @@ export const OVERLAY_LABELS: Record<Overlay, string> = {
 };
 
 const COLORS = {
-  background: "#11151a",
-  text: "#8f98a5",
-  grid: "#1b2027",
-  border: "#2a3038",
-  up: "#70cfa5",
-  down: "#eb8686",
-  line: "#78a9dd",
-  ema20: "#78a9dd",
-  ema50: "#e8c56b",
-  sma200: "#b190dd",
-  band: "#5e6874",
-  volumeUp: "rgba(112, 207, 165, 0.32)",
-  volumeDown: "rgba(235, 134, 134, 0.32)",
-  userNote: "#e8c56b",
-  claudeNote: "#b190dd",
+  background: "#16181b",
+  text: "#8e939c",
+  grid: "#1f2226",
+  border: "#2a2d33",
+  up: "#3dd68c",
+  down: "#ff6b6b",
+  line: "#2ec4b6",
+  ema20: "#6fa8ff",
+  ema50: "#e3b65c",
+  sma200: "#b39df2",
+  band: "#5c6068",
+  volumeUp: "rgba(61, 214, 140, 0.28)",
+  volumeDown: "rgba(255, 107, 107, 0.28)",
+  userNote: "#e3b65c",
+  target: "#2ec4b6",
+  stop: "#ff6b6b",
+  claudeNote: "#b39df2",
 };
 
 /** Group pinned notes onto the first trading day on or after each pinned date in view. */
@@ -82,6 +90,7 @@ export function PriceChart({
   overlays,
   lowerPane,
   notes = [],
+  levels = [],
   onSelectDate,
 }: {
   data: ChartPayload;
@@ -89,6 +98,7 @@ export function PriceChart({
   overlays: Overlay[];
   lowerPane: LowerPane;
   notes?: Note[];
+  levels?: PriceLevel[];
   onSelectDate?: (date: string) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -103,6 +113,25 @@ export function PriceChart({
   const onSelectRef = useRef(onSelectDate);
   onSelectRef.current = onSelectDate;
   const markerApi = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const mainSeries = useRef<ISeriesApi<SeriesType> | null>(null);
+  const priceLines = useRef<IPriceLine[]>([]);
+  const levelsRef = useRef(levels);
+  levelsRef.current = levels;
+  const levelKey = levels.map((level) => `${level.kind}:${level.price}:${level.proposed}`).join("|");
+
+  function drawLevels() {
+    const target = mainSeries.current;
+    if (!target) return;
+    for (const line of priceLines.current) target.removePriceLine(line);
+    priceLines.current = levelsRef.current.map((level) => target.createPriceLine({
+      price: level.price,
+      color: level.kind === "target" ? COLORS.target : COLORS.stop,
+      lineWidth: 1,
+      lineStyle: level.proposed ? LineStyle.Dotted : LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: level.label,
+    }));
+  }
 
   useEffect(() => {
     if (!container.current || !data.bars.length) return;
@@ -112,13 +141,13 @@ export function PriceChart({
         background: { type: ColorType.Solid, color: COLORS.background },
         textColor: COLORS.text,
         fontSize: 10,
-        fontFamily: "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
+        fontFamily: "IBM Plex Mono, ui-monospace, Menlo, monospace",
         attributionLogo: false,
         panes: { separatorColor: COLORS.border, separatorHoverColor: COLORS.border, enableResize: false },
       },
       grid: { vertLines: { color: COLORS.grid }, horzLines: { color: COLORS.grid } },
       rightPriceScale: { borderColor: COLORS.border },
-      timeScale: { borderColor: COLORS.border, rightOffset: 3 },
+      timeScale: { borderColor: COLORS.border, rightOffset: 3, lockVisibleTimeRangeOnResize: true },
       crosshair: { mode: CrosshairMode.Normal },
     });
     const { bars, indicators } = data;
@@ -136,11 +165,15 @@ export function PriceChart({
       });
       candles.setData(bars.map((bar) => ({ time: bar.date as Time, open: bar.open, high: bar.high, low: bar.low, close: bar.close })));
       markerApi.current = createSeriesMarkers(candles, markersRef.current);
+      mainSeries.current = candles;
     } else {
       const line = chart.addSeries(LineSeries, { color: COLORS.line, lineWidth: 2 });
       line.setData(bars.map((bar) => ({ time: bar.date as Time, value: bar.close })));
       markerApi.current = createSeriesMarkers(line, markersRef.current);
+      mainSeries.current = line;
     }
+    priceLines.current = [];
+    drawLevels();
 
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "volume", lastValueVisible: false, priceLineVisible: false });
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -192,6 +225,8 @@ export function PriceChart({
       chart.unsubscribeCrosshairMove(onMove);
       chart.unsubscribeClick(onClick);
       markerApi.current = null;
+      mainSeries.current = null;
+      priceLines.current = [];
       chart.remove();
     };
   }, [data, chartType, overlayKey, lowerPane, indexByDate]);
@@ -199,6 +234,9 @@ export function PriceChart({
   useEffect(() => {
     markerApi.current?.setMarkers(markers);
   }, [markers]);
+
+  // Levels are read through a ref, so redraw only when their values change.
+  useEffect(drawLevels, [levelKey]);
 
   const index = hovered ?? data.bars.length - 1;
   const bar = data.bars[index];

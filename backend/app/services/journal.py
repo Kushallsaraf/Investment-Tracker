@@ -114,6 +114,7 @@ class JournalService:
             "decision": decision,
             "triggers": triggers,
             "notes": self.repository.notes(canonical),
+            "exit_plans": self.repository.exit_plans(canonical),
         }
 
     def save_symbol_decision(self, symbol: str, values: dict[str, Any]) -> dict[str, Any]:

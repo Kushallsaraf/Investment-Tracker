@@ -7,6 +7,9 @@ import type {
   ChartRange,
   ClaudePrompt,
   DecisionName,
+  ExitPlan,
+  ExitPlanInput,
+  ExitPlanStatus,
   Fundamentals,
   HistoryPoint,
   IncomePayload,
@@ -338,4 +341,26 @@ export async function updateNote(noteId: string, body: string, pinnedDate: strin
 
 export async function deleteNote(noteId: string): Promise<void> {
   await responseJson(await fetch(`/api/notes/${noteId}`, { method: "DELETE", headers: WRITE_HEADERS }));
+}
+
+export async function getExitPlans(status?: ExitPlanStatus): Promise<ExitPlan[]> {
+  const query = status ? `?status=${status}` : "";
+  return (await responseJson<{ plans: ExitPlan[] }>(await fetch(`/api/exit-plans${query}`))).plans;
+}
+
+export async function createExitPlan(symbol: string, plan: ExitPlanInput): Promise<ExitPlan> {
+  const payload = await responseJson<{ plan: ExitPlan }>(await fetch(`/api/market/${encodeURIComponent(symbol)}/exit-plans`, {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify(plan),
+  }));
+  return payload.plan;
+}
+
+export async function decideExitPlan(planId: string, decision: "accept" | "reject"): Promise<ExitPlan> {
+  const payload = await responseJson<{ plan: ExitPlan }>(await fetch(`/api/exit-plans/${planId}/${decision}`, {
+    method: "POST",
+    headers: WRITE_HEADERS,
+  }));
+  return payload.plan;
 }

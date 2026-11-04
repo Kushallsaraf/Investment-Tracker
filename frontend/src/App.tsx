@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { getMarketStrip } from "./api";
 import { AppShell, TOP_TABS, type TopTab } from "./components/AppShell";
 import { PortfolioApp } from "./portfolio/PortfolioApp";
-import { CommandBar } from "./terminal/CommandBar";
-import { MarketStrip } from "./terminal/MarketStrip";
-import { TerminalPage } from "./terminal/TerminalPage";
+import { CommandBar } from "./research/CommandBar";
+import { MarketStrip } from "./research/MarketStrip";
+import { ResearchView } from "./research/ResearchView";
 import type { StripItem } from "./types";
 
 const TOP_TAB_KEY = "investment-tracker.top-tab.v1";
@@ -29,10 +29,12 @@ function writeStorage(key: string, value: string) {
 
 function initialRoute(): { tab: TopTab; symbol: string } {
   const [first = "", second = ""] = window.location.hash.replace("#", "").split("/");
-  const tab = TOP_TABS.find((candidate) => candidate.toLowerCase() === first.toLowerCase())
+  // "#terminal/SYM" links from before the rename still open Research.
+  const hashTab = first.toLowerCase() === "terminal" ? "research" : first.toLowerCase();
+  const tab = TOP_TABS.find((candidate) => candidate.toLowerCase() === hashTab)
     ?? TOP_TABS.find((candidate) => candidate === readStorage(TOP_TAB_KEY))
-    ?? "Terminal";
-  const symbol = (tab === "Terminal" && second ? second : readStorage(SYMBOL_KEY)) || "SPY";
+    ?? "Research";
+  const symbol = (tab === "Research" && second ? second : readStorage(SYMBOL_KEY)) || "SPY";
   return { tab, symbol: symbol.toUpperCase() };
 }
 
@@ -53,8 +55,8 @@ export function App() {
   }, [loadStrip]);
 
   useEffect(() => {
-    if (activeTab === "Terminal") {
-      window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#terminal/${symbol}`);
+    if (activeTab === "Research") {
+      window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#research/${symbol}`);
     } else if (!window.location.hash.startsWith("#portfolio")) {
       window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#portfolio`);
     }
@@ -71,7 +73,7 @@ export function App() {
     if (!normalized) return;
     setSymbol(normalized);
     writeStorage(SYMBOL_KEY, normalized);
-    selectTab("Terminal");
+    selectTab("Research");
   }
 
   return (
@@ -81,7 +83,7 @@ export function App() {
       search={<CommandBar onSubmit={openSymbol} />}
       strip={<MarketStrip items={strip} onOpen={openSymbol} />}
     >
-      {activeTab === "Terminal" ? <TerminalPage symbol={symbol} onOpenSymbol={openSymbol} /> : <PortfolioApp />}
+      {activeTab === "Research" ? <ResearchView symbol={symbol} onOpenSymbol={openSymbol} /> : <PortfolioApp onOpenSymbol={openSymbol} />}
     </AppShell>
   );
 }

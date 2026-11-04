@@ -5,10 +5,22 @@ import { App } from "./App";
 const chartMocks = vi.hoisted(() => ({
   setMarkers: vi.fn(),
   clickHandlers: [] as Array<(param: { time?: string }) => void>,
+  priceLines: [] as Array<{ price: number; title: string }>,
 }));
 
 vi.mock("lightweight-charts", () => {
-  const series = () => ({ setData: vi.fn(), createPriceLine: vi.fn(), priceScale: () => ({ applyOptions: vi.fn() }) });
+  const series = () => ({
+    setData: vi.fn(),
+    createPriceLine: vi.fn((options: { price: number; title: string }) => {
+      if (options.title) chartMocks.priceLines.push(options);
+      return options;
+    }),
+    removePriceLine: vi.fn((line: unknown) => {
+      const index = chartMocks.priceLines.indexOf(line as { price: number; title: string });
+      if (index >= 0) chartMocks.priceLines.splice(index, 1);
+    }),
+    priceScale: () => ({ applyOptions: vi.fn() }),
+  });
   return {
     createChart: vi.fn(() => ({
       addSeries: vi.fn(series),
@@ -158,12 +170,24 @@ const note = {
   id: "note-1", symbol: "SPY", body: "Earnings gap filled. Watching $125 as support.", pinned_date: "2026-09-15",
   author: "USER", created_at: "2026-09-16T12:00:00Z", updated_at: "2026-09-16T12:00:00Z",
 };
+const proposal = {
+  id: "plan-1", symbol: "SPY", target_price: "800.00", stop_price: "700.00", review_date: "2027-01-15",
+  reasoning: "Prior high near 800; the stop sits under the 200-day average.", proposed_by: "CLAUDE",
+  status: "PROPOSED", reference_price: "765.37", reference_date: "2026-09-30", note_id: null,
+  created_at: "2026-10-01T12:00:00Z", decided_at: null,
+};
+const acceptedPlan = {
+  ...proposal, id: "plan-0", target_price: "780.00", stop_price: "720.00", review_date: null,
+  reasoning: "Earlier plan.", proposed_by: "USER", status: "ACCEPTED", decided_at: "2026-09-20T12:00:00Z",
+};
+
 function journalFor(symbol: string, decision: string | null = null) {
   return {
     symbol, instrument_id: decision ? "instrument-9" : null,
     decision: decision ? { instrument_id: "instrument-9", symbol, decision, reason: "", decision_date: "2026-10-20", review_due_date: null, updated_at: "2026-10-20T00:00:00Z" } : null,
     triggers: [{ id: "trigger-1", instrument_id: "instrument-9", symbol, trigger_type: "PRICE_ABOVE", lower_value: null, upper_value: "140", trigger_date: null, note: "", reason: "", expires_at: null, state: "ACTIVE", created_at: "2026-10-20T00:00:00Z", triggered_at: null, observed_value: null, quote_source: null, quote_timestamp: null, frozen_holding_snapshot_id: null, frozen_valuation_snapshot_id: null }],
     notes: symbol === "SPY" ? [note] : [],
+    exit_plans: symbol === "SPY" ? [proposal, acceptedPlan] : [],
   };
 }
 
@@ -223,6 +247,8 @@ function createFetch(overrides: Record<string, unknown> = {}) {
       warnings: ["Income is calculated only from activities recorded in this application."],
     } });
     if (url === "/api/journal") return response({ journal });
+    if (url === "/api/exit-plans?status=PROPOSED") return response({ plans: [proposal] });
+    if (/^\/api\/market\/[^/]+\/exit-plans$/.test(url)) return response({ status: "ok", plan: { ...proposal, id: "plan-2", proposed_by: "USER", status: "ACCEPTED" } });
     if (url === "/api/research/prompts") return response({ prompts: [{
       id: "prompt-1", name: "US evidence review", prompt_text: "Use sources and as-of dates.",
       is_default: 1, created_at: "2026-09-11T12:00:00Z", updated_at: "2026-09-11T12:00:00Z",
@@ -253,22 +279,39 @@ describe("Investment Tracker", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Portfolio" }));
   }
 
-  it("opens the terminal by default with a chart, market strip and technical setup", async () => {
+  async function openPortfolioView(button: string | RegExp) {
+    await openPortfolio();
+    fireEvent.click(await screen.findByRole("button", { name: button }));
+    return within(await screen.findByRole("dialog"));
+  }
+
+  async function openSummaryCard(label: RegExp) {
+    fireEvent.click(await screen.findByRole("button", { name: label }));
+    return within(await screen.findByRole("dialog"));
+  }
+
+  it("opens Research by default with a chart, market pulse and summary cards", async () => {
     vi.stubGlobal("fetch", createFetch());
     render(<App />);
     expect(await screen.findByRole("heading", { name: "SPY" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Research" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("SPY Synthetic Inc. · NYSE · STOCK")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "SPY daily candlestick chart, 1Y range" })).toBeInTheDocument();
     expect(screen.getByText("765.37")).toBeInTheDocument();
-    expect(await screen.findByText("below / above / above")).toBeInTheDocument();
-    expect(screen.getByText("64.2 · neutral")).toBeInTheDocument();
-    expect(screen.getByText("1.62×")).toBeInTheDocument();
-    for (const title of ["AI analyst", "Strategy scanner", "Fundamentals", "News and sentiment", "Insider activity", "Peers", "Macro and markets"]) {
-      expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+    const summary = within(screen.getByRole("region", { name: "Summary" }));
+    for (const label of ["Trend", "Valuation", "Insiders", "Peers", "Notes", "Strategies"]) {
+      expect(summary.getByText(label)).toBeInTheDocument();
     }
-    expect(screen.getAllByText("Not connected yet")).toHaveLength(4);
-    expect(window.location.hash).toBe("#terminal/SPY");
+    expect(await summary.findByText("P/E 52.3×")).toBeInTheDocument();
+    expect(summary.getByText("40th percentile of its 5 years")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const drawer = await openSummaryCard(/^Trend/);
+    expect(await drawer.findByText("below / above / above")).toBeInTheDocument();
+    expect(drawer.getByText("64.2 · neutral")).toBeInTheDocument();
+    expect(drawer.getByText("1.62×")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(window.location.hash).toBe("#research/SPY");
   });
 
   it("opens tickers from the command bar and saves chart preferences", async () => {
@@ -287,39 +330,48 @@ describe("Investment Tracker", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/market/BRK.B/chart?range=5Y"));
     fireEvent.click(screen.getByRole("button", { name: "Line" }));
     expect(screen.getByRole("img", { name: "BRK.B daily line chart, 5Y range" })).toBeInTheDocument();
-    expect(JSON.parse(window.localStorage.getItem("investment-tracker.chart-prefs.v1") ?? "{}")).toMatchObject({ range: "5Y", chartType: "line" });
-    fireEvent.click(screen.getByRole("button", { name: "☆ WATCH" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Bollinger" }));
+    expect(JSON.parse(window.localStorage.getItem("investment-tracker.chart-prefs.v1") ?? "{}")).toMatchObject({ range: "5Y", chartType: "line", overlays: ["ema20", "ema50", "sma200", "bollinger"] });
+    fireEvent.click(screen.getByRole("button", { name: "Add BRK.B to watchlist" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/watchlist", expect.objectContaining({ method: "POST", body: JSON.stringify({ symbol: "BRK.B" }) }),
     ));
   });
 
-  it("shows SEC fundamentals, insider activity and editable peers", async () => {
+  it("shows SEC fundamentals, insider activity and editable peers in drawers", async () => {
     const fetchMock = createFetch();
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
-    await screen.findByText("Gross margin");
-    const fundamentalsPanel = within(screen.getByRole("heading", { name: "Fundamentals" }).closest("section") as HTMLElement);
-    expect(fundamentalsPanel.getByText("$4.5T")).toBeInTheDocument();
-    expect(fundamentalsPanel.getAllByText("52.3×").length).toBeGreaterThan(0);
-    expect(fundamentalsPanel.getByText("+62.0%")).toBeInTheDocument();
-    expect(fundamentalsPanel.getByTitle("EBITDA negative or unavailable")).toHaveTextContent("N/A");
-    expect(screen.getByRole("img", { name: "P/E 52.3×, 40th percentile of 20 quarters" })).toBeInTheDocument();
-    expect(screen.getByText(/Needs at least 8 quarters/)).toBeInTheDocument();
-    expect(screen.getByText("LATEST 10-Q · FILED Aug 5, 2026")).toHaveAttribute("href", fundamentals.latest_filing.url);
-    expect(screen.getByText("$50K · 1 buyer")).toBeInTheDocument();
-    expect(screen.getByText("Open-market sale · 10b5-1")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Jane Doe" })).toHaveAttribute("href", "https://www.sec.gov/a-index.htm");
-    expect(screen.getByText("Not available (RuntimeError)")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "EDIT PEERS" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Peer tickers" }), { target: { value: "tsm, umc" } });
-    fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
+    await screen.findByText("P/E 52.3×");
+    let drawer = await openSummaryCard(/^Valuation/);
+    expect(drawer.getByText("Gross margin")).toBeInTheDocument();
+    expect(drawer.getByText("$4.5T")).toBeInTheDocument();
+    expect(drawer.getAllByText("52.3×").length).toBeGreaterThan(0);
+    expect(drawer.getByText("+62.0%")).toBeInTheDocument();
+    expect(drawer.getByTitle("EBITDA negative or unavailable")).toHaveTextContent("N/A");
+    expect(drawer.getByRole("img", { name: "P/E 52.3×, 40th percentile of 20 quarters" })).toBeInTheDocument();
+    expect(drawer.getByText(/Needs at least 8 quarters/)).toBeInTheDocument();
+    expect(drawer.getByText("LATEST 10-Q · FILED Aug 5, 2026")).toHaveAttribute("href", fundamentals.latest_filing.url);
+    fireEvent.click(drawer.getByRole("button", { name: "Close" }));
+
+    drawer = await openSummaryCard(/^Insiders/);
+    expect(drawer.getByText("$50K · 1 buyer")).toBeInTheDocument();
+    expect(drawer.getByText("Open-market sale · 10b5-1")).toBeInTheDocument();
+    expect(drawer.getByRole("link", { name: "Jane Doe" })).toHaveAttribute("href", "https://www.sec.gov/a-index.htm");
+    fireEvent.click(drawer.getByRole("button", { name: "Close" }));
+
+    drawer = await openSummaryCard(/^Peers/);
+    expect(drawer.getByText("Not available (RuntimeError)")).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "Edit peers" }));
+    fireEvent.change(drawer.getByRole("textbox", { name: "Peer tickers" }), { target: { value: "tsm, umc" } });
+    fireEvent.click(drawer.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/market/SPY/peers", expect.objectContaining({ method: "PUT", body: JSON.stringify({ symbols: ["TSM", "UMC"] }) }),
     ));
-    expect(await screen.findByText("YOUR LIST")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "AMD" }));
+    expect(await drawer.findByText("YOUR LIST")).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "AMD" }));
     expect(await screen.findByRole("heading", { name: "AMD" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("keeps notes pinned to the chart and records a decision for any ticker", async () => {
@@ -329,28 +381,30 @@ describe("Investment Tracker", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
     expect(await screen.findByText(note.body)).toBeInTheDocument();
-    expect(screen.getByText("PINNED SEP 15, 2026")).toBeInTheDocument();
-    expect(screen.getByText("Review above 140 · ACTIVE")).toBeInTheDocument();
     await waitFor(() => expect(chartMocks.setMarkers).toHaveBeenCalledWith([
       expect.objectContaining({ time: "2026-09-15", position: "aboveBar", text: "N" }),
     ]));
 
     act(() => chartMocks.clickHandlers.at(-1)?.({ time: "2026-09-20" }));
-    expect(await screen.findByLabelText("Pin note to date")).toHaveValue("2026-09-20");
-    fireEvent.click(screen.getByRole("button", { name: "ADD NOTE" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Write a note first.");
-    fireEvent.change(screen.getByRole("textbox", { name: "New note for SPY" }), { target: { value: "Breakout above 130." } });
-    fireEvent.click(screen.getByRole("button", { name: "ADD NOTE" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pin a note · Sep 20, 2026" }));
+    const drawer = within(await screen.findByRole("dialog"));
+    expect(drawer.getByText("PINNED SEP 15, 2026")).toBeInTheDocument();
+    expect(drawer.getByText("Review above 140 · ACTIVE")).toBeInTheDocument();
+    expect(drawer.getByLabelText("Pin note to date")).toHaveValue("2026-09-20");
+    fireEvent.click(drawer.getByRole("button", { name: "Add note" }));
+    expect(drawer.getByRole("alert")).toHaveTextContent("Write a note first.");
+    fireEvent.change(drawer.getByRole("textbox", { name: "New note for SPY" }), { target: { value: "Breakout above 130." } });
+    fireEvent.click(drawer.getByRole("button", { name: "Add note" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/market/SPY/notes", expect.objectContaining({
       method: "POST", body: JSON.stringify({ body: "Breakout above 130.", pinned_date: "2026-09-20" }),
     })));
 
-    fireEvent.change(screen.getByRole("combobox", { name: "My decision for SPY" }), { target: { value: "CONSIDER_ADD" } });
+    fireEvent.change(drawer.getByRole("combobox", { name: "My decision for SPY" }), { target: { value: "CONSIDER_ADD" } });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/market/SPY/decision", expect.objectContaining({ method: "POST" })));
-    expect(await screen.findByRole("combobox", { name: "My decision for SPY" })).toHaveValue("CONSIDER_ADD");
+    expect(await drawer.findByRole("combobox", { name: "My decision for SPY" })).toHaveValue("CONSIDER_ADD");
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete note from Sep 16, 2026" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+    fireEvent.click(drawer.getByRole("button", { name: "Delete note from Sep 16, 2026" }));
+    fireEvent.click(drawer.getByRole("button", { name: "Confirm delete" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/notes/note-1", expect.objectContaining({ method: "DELETE" })));
   });
 
@@ -365,30 +419,33 @@ describe("Investment Tracker", () => {
     expect(await screen.findByText(/Set PORTFOLIO_MANAGER_SEC_USER_AGENT/)).toBeInTheDocument();
   });
 
-  it("explains when a ticker cannot be loaded", async () => {
+  it("explains when a ticker cannot be loaded, including old Terminal links", async () => {
     vi.stubGlobal("fetch", createFetch());
     window.history.replaceState({}, "", "/#terminal/NOPE");
     render(<App />);
     expect(await screen.findByRole("alert")).toHaveTextContent("NOPE was not found");
     expect(screen.getByText("NOPE is unavailable")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#research/NOPE");
   });
 
-  it("keeps the portfolio views under the Portfolio tab with explicit evidence states", async () => {
-    vi.stubGlobal("fetch", createFetch());
+  it("summarizes the portfolio and opens detail views as drawers", async () => {
+    const onOpen = createFetch();
+    vi.stubGlobal("fetch", onOpen);
     render(<App />);
     await openPortfolio();
-    expect(await screen.findByRole("heading", { name: "Portfolio dashboard" })).toBeInTheDocument();
-    const nav = screen.getByRole("tablist", { name: "Portfolio views" });
-    for (const name of ["Overview", "Holdings", "Analytics", "Income", "Activity", "Decisions", "Research", "Settings"]) {
-      expect(within(nav).getByRole("tab", { name })).toBeInTheDocument();
-    }
-    expect(screen.getByText("MANUAL PORTFOLIO")).toBeInTheDocument();
-    expect(screen.getByText(/Manual portfolio · 1 holdings · USD reporting/)).toBeInTheDocument();
+    expect(await screen.findByText("Portfolio value")).toBeInTheDocument();
+    expect(screen.getByText("Manual portfolio")).toBeInTheDocument();
+    expect(screen.getByText(/1 holdings · as of/)).toBeInTheDocument();
     expect(screen.getAllByText("$100.00").length).toBeGreaterThan(0);
-    expect(screen.getByText("Today’s change").nextElementSibling).toHaveTextContent("NOT AVAILABLE");
-    fireEvent.click(within(nav).getByRole("tab", { name: "Income" }));
-    expect(screen.getByRole("heading", { name: "Income" })).toBeInTheDocument();
-    expect(window.localStorage.getItem("investment-tracker.portfolio-view.v1")).toBe("Income");
+    fireEvent.click(screen.getByRole("button", { name: "ACME details" }));
+    const position = within(await screen.findByRole("dialog"));
+    expect(position.getByText("Market value")).toBeInTheDocument();
+    fireEvent.click(position.getByRole("button", { name: "Open in Research" }));
+    expect(await screen.findByRole("heading", { name: "ACME" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Research" })).toHaveAttribute("aria-selected", "true");
+
+    const income = await openPortfolioView("Income");
+    expect(income.getAllByRole("heading", { name: "Income" }).length).toBeGreaterThan(0);
     expect(window.location.hash).toBe("#portfolio/income");
     expect(screen.queryByText(/place order/i)).not.toBeInTheDocument();
   });
@@ -396,41 +453,40 @@ describe("Investment Tracker", () => {
   it("provides all analytics views without fabricating unavailable returns or risk", async () => {
     vi.stubGlobal("fetch", createFetch());
     render(<App />);
-    await openPortfolio();
-    fireEvent.click(await screen.findByRole("tab", { name: "Analytics" }));
-    const tabs = screen.getByRole("tablist", { name: "Analytics views" });
+    const drawer = await openPortfolioView("Analytics");
+    const tabs = drawer.getByRole("tablist", { name: "Analytics views" });
     for (const name of ["Diversification", "Performance", "Risk", "ETF look-through"]) {
       expect(within(tabs).getByRole("tab", { name })).toBeInTheDocument();
     }
     fireEvent.click(within(tabs).getByRole("tab", { name: "Performance" }));
-    expect(screen.getAllByText(/INSUFFICIENT TRANSACTION HISTORY/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/current holdings are not backfilled/i)).toBeInTheDocument();
+    expect(drawer.getAllByText(/INSUFFICIENT TRANSACTION HISTORY/).length).toBeGreaterThan(0);
+    expect(drawer.getByText(/current holdings are not backfilled/i)).toBeInTheDocument();
     fireEvent.click(within(tabs).getByRole("tab", { name: "Risk" }));
-    expect(screen.getByText("Historical risk · not a forecast")).toBeInTheDocument();
+    expect(drawer.getByText("Historical risk · not a forecast")).toBeInTheDocument();
     fireEvent.click(within(tabs).getByRole("tab", { name: "ETF look-through" }));
-    expect(screen.getByText(/verified constituent holdings are not stored/)).toBeInTheDocument();
-    expect(screen.getByText("NO BROAD AUTOMATIC SUPPORT CLAIM")).toBeInTheDocument();
+    expect(drawer.getByText(/verified constituent holdings are not stored/)).toBeInTheDocument();
+    expect(drawer.getByText("NO BROAD AUTOMATIC SUPPORT CLAIM")).toBeInTheDocument();
   });
 
   it("keeps the holdings worksheet configurable and confirms keyboard row deletion locally", async () => {
     const fetchMock = createFetch();
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
-    await openPortfolio();
-    fireEvent.click(await screen.findByRole("tab", { name: "Holdings" }));
-    expect(screen.queryByRole("columnheader", { name: "Account" })).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Sector for ACME" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "My decision for ACME" })).toHaveValue("WATCH");
-    fireEvent.click(screen.getByText(/COLUMNS \d+\/\d+/));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Account" }));
-    expect(screen.getByRole("columnheader", { name: "Account" })).toBeInTheDocument();
+    const drawer = await openPortfolioView("Edit holdings");
+    expect(drawer.queryByRole("columnheader", { name: "Account" })).not.toBeInTheDocument();
+    expect(drawer.getByRole("combobox", { name: "Sector for ACME" })).toBeInTheDocument();
+    expect(drawer.getByRole("combobox", { name: "My decision for ACME" })).toHaveValue("WATCH");
+    fireEvent.click(drawer.getByText(/COLUMNS \d+\/\d+/));
+    fireEvent.click(drawer.getByRole("checkbox", { name: "Account" }));
+    expect(drawer.getByRole("columnheader", { name: "Account" })).toBeInTheDocument();
     expect(window.localStorage.getItem("portfolio-manager.visible-columns.v2")).toContain("account");
-    const rowButton = screen.getByRole("button", { name: "Select row 1: ACME" });
+    const rowButton = drawer.getByRole("button", { name: "Select row 1: ACME" });
     fireEvent.click(rowButton);
     fireEvent.keyDown(rowButton, { key: "Delete" });
-    expect(await screen.findByRole("dialog")).toHaveTextContent("It is not a sale");
-    expect(screen.getByRole("dialog")).toHaveTextContent("never contacts a brokerage");
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "DELETE LOCAL ROW" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent("It is not a sale");
+    expect(confirm).toHaveTextContent("never contacts a brokerage");
+    fireEvent.click(within(confirm).getByRole("button", { name: "DELETE LOCAL ROW" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/portfolio/positions/position-1", expect.objectContaining({ method: "DELETE" }),
     ));
@@ -440,24 +496,23 @@ describe("Investment Tracker", () => {
     const fetchMock = createFetch();
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
-    await openPortfolio();
-    fireEvent.click(await screen.findByRole("tab", { name: "Decisions" }));
-    expect(screen.getByText("MY DECISION ≠ CLAUDE SUGGESTION")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "My decision for ACME" })).toHaveValue("WATCH");
-    expect(screen.getByText("Manual Claude workflow only")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Portfolio role" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Thesis strength" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Trigger condition" })).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "Decision reason" }), {
+    const drawer = await openPortfolioView(/^Alerts/);
+    expect(drawer.getByText("MY DECISION ≠ CLAUDE SUGGESTION")).toBeInTheDocument();
+    expect(drawer.getByRole("combobox", { name: "My decision for ACME" })).toHaveValue("WATCH");
+    expect(drawer.getByText("Manual Claude workflow only")).toBeInTheDocument();
+    expect(drawer.getByRole("combobox", { name: "Portfolio role" })).toBeInTheDocument();
+    expect(drawer.getByRole("combobox", { name: "Thesis strength" })).toBeInTheDocument();
+    expect(drawer.getByRole("combobox", { name: "Trigger condition" })).toBeInTheDocument();
+    fireEvent.change(drawer.getByRole("textbox", { name: "Decision reason" }), {
       target: { value: "Revisit after the next evidence update" },
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "Claude suggestion response" }), {
+    fireEvent.change(drawer.getByRole("combobox", { name: "Claude suggestion response" }), {
       target: { value: "CONSIDERING" },
     });
-    fireEvent.change(screen.getByLabelText("Decision review due date"), {
+    fireEvent.change(drawer.getByLabelText("Decision review due date"), {
       target: { value: "2026-10-15" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "RECORD DECISION" }));
+    fireEvent.click(drawer.getByRole("button", { name: "RECORD DECISION" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/journal/instruments/instrument-1/decisions",
       expect.objectContaining({
@@ -469,45 +524,43 @@ describe("Investment Tracker", () => {
       "/api/journal/instruments/instrument-1/decisions",
       expect.objectContaining({ body: expect.stringContaining('"review_due_date":"2026-10-15"') }),
     );
-    expect(screen.getByText("REVIEW ONLY · NEVER AN ORDER")).toBeInTheDocument();
-    expect(screen.getByText(/never contacts? Claude or a brokerage/i)).toBeInTheDocument();
+    expect(drawer.getByText("REVIEW ONLY · NEVER AN ORDER")).toBeInTheDocument();
+    expect(drawer.getByText(/never contacts? Claude or a brokerage/i)).toBeInTheDocument();
   });
 
   it("previews a weights-only Claude review pack without sending data to Claude", async () => {
     vi.stubGlobal("fetch", createFetch());
     render(<App />);
-    await openPortfolio();
-    fireEvent.click(await screen.findByRole("tab", { name: "Research" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Research holding" }), {
+    const drawer = await openPortfolioView("AI review packs");
+    fireEvent.change(drawer.getByRole("combobox", { name: "Research holding" }), {
       target: { value: "instrument-1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "PREVIEW EXACT MARKDOWN" }));
-    expect(await screen.findByText(/# ACME evidence review/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Claude review pack Markdown preview")).toHaveTextContent("Quantity: excluded");
-    expect(screen.getByText(/no Claude API connection/i)).toBeInTheDocument();
-    expect(screen.getByText("STORED SEPARATELY FROM MY DECISION")).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "PREVIEW EXACT MARKDOWN" }));
+    expect(await drawer.findByText(/# ACME evidence review/)).toBeInTheDocument();
+    expect(drawer.getByLabelText("Claude review pack Markdown preview")).toHaveTextContent("Quantity: excluded");
+    expect(drawer.getByText(/no Claude API connection/i)).toBeInTheDocument();
+    expect(drawer.getByText("STORED SEPARATELY FROM MY DECISION")).toBeInTheDocument();
   });
 
   it("records activities in the local ledger and confirms deletion", async () => {
     const fetchMock = createFetch();
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
-    await openPortfolio();
-    fireEvent.click(await screen.findByRole("tab", { name: "Activity" }));
-    expect(screen.getByText("NO ORDER ACTIONS AVAILABLE")).toBeInTheDocument();
-    expect(screen.getByText("Quarterly dividend")).toBeInTheDocument();
-    expect(screen.getByText("$12.50")).toBeInTheDocument();
-    expect(screen.getByText("Jun 30, 2026")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("combobox", { name: "New activity type" }), { target: { value: "DEPOSIT" } });
-    fireEvent.change(screen.getByLabelText("New activity date"), { target: { value: "2026-09-01" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "New activity cash amount" }), { target: { value: "500" } });
-    fireEvent.click(screen.getByRole("button", { name: "RECORD ACTIVITY" }));
+    const drawer = await openPortfolioView("Activity");
+    expect(drawer.getByText("NO ORDER ACTIONS AVAILABLE")).toBeInTheDocument();
+    expect(drawer.getByText("Quarterly dividend")).toBeInTheDocument();
+    expect(drawer.getByText("$12.50")).toBeInTheDocument();
+    expect(drawer.getByText("Jun 30, 2026")).toBeInTheDocument();
+    fireEvent.change(drawer.getByRole("combobox", { name: "New activity type" }), { target: { value: "DEPOSIT" } });
+    fireEvent.change(drawer.getByLabelText("New activity date"), { target: { value: "2026-09-01" } });
+    fireEvent.change(drawer.getByRole("textbox", { name: "New activity cash amount" }), { target: { value: "500" } });
+    fireEvent.click(drawer.getByRole("button", { name: "RECORD ACTIVITY" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/activity",
       expect.objectContaining({ method: "POST", body: expect.stringContaining('"activity_type":"DEPOSIT"') }),
     ));
-    fireEvent.click(screen.getByRole("button", { name: "Delete DIVIDEND ACME 2026-06-30" }));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "DELETE ACTIVITY" }));
+    fireEvent.click(drawer.getByRole("button", { name: "Delete DIVIDEND ACME 2026-06-30" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "DELETE ACTIVITY" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/activity/activity-1", expect.objectContaining({ method: "DELETE" }),
     ));
@@ -518,12 +571,11 @@ describe("Investment Tracker", () => {
     const fetchMock = createFetch();
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
-    await openPortfolio();
-    fireEvent.click(await screen.findByRole("tab", { name: "Holdings" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Position symbol" }), { target: { value: "voo" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Position quantity" }), { target: { value: "3" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Position average cost" }), { target: { value: "410.5" } });
-    fireEvent.click(screen.getByRole("button", { name: "SAVE POSITION" }));
+    const drawer = await openPortfolioView("Edit holdings");
+    fireEvent.change(drawer.getByRole("textbox", { name: "Position symbol" }), { target: { value: "voo" } });
+    fireEvent.change(drawer.getByRole("textbox", { name: "Position quantity" }), { target: { value: "3" } });
+    fireEvent.change(drawer.getByRole("textbox", { name: "Position average cost" }), { target: { value: "410.5" } });
+    fireEvent.click(drawer.getByRole("button", { name: "SAVE POSITION" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/portfolio/positions",
       expect.objectContaining({
@@ -531,25 +583,24 @@ describe("Investment Tracker", () => {
         body: JSON.stringify({ symbol: "voo", quantity: "3", average_cost: "410.5", account_name: "Brokerage" }),
       }),
     ));
-    fireEvent.click(screen.getByRole("button", { name: "Select row 1: ACME" }));
-    expect(screen.getByRole("textbox", { name: "Position symbol" })).toHaveValue("ACME");
-    expect(screen.getByRole("textbox", { name: "Position quantity" })).toHaveValue("2");
-    expect(screen.getByRole("button", { name: "SAVE CHANGES" })).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "Select row 1: ACME" }));
+    expect(drawer.getByRole("textbox", { name: "Position symbol" })).toHaveValue("ACME");
+    expect(drawer.getByRole("textbox", { name: "Position quantity" })).toHaveValue("2");
+    expect(drawer.getByRole("button", { name: "SAVE CHANGES" })).toBeInTheDocument();
   });
 
   it("shows portfolio data controls and loads the demo only after confirmation", async () => {
     const fetchMock = createFetch({ "GET /api/portfolio/status": { data_origin: null, snapshot_count: 0, latest_snapshot_at: null } });
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
-    await openPortfolio();
-    fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
-    expect(screen.getAllByText("NO PORTFOLIO").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Yahoo daily\/manual · separate from holdings/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "VIEW HISTORY" }));
-    expect(screen.getByText("NO HISTORICAL VALUATION SNAPSHOTS")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "DELETE LOCAL DATA" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "LOAD DEMO" }));
-    const dialog = await screen.findByRole("dialog");
+    const drawer = await openPortfolioView("Settings");
+    expect(drawer.getAllByText("No portfolio").length).toBeGreaterThan(0);
+    expect(drawer.getByText(/Yahoo daily\/manual · separate from holdings/)).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "VIEW HISTORY" }));
+    expect(drawer.getByText("NO HISTORICAL VALUATION SNAPSHOTS")).toBeInTheDocument();
+    expect(drawer.getByRole("button", { name: "DELETE LOCAL DATA" })).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "LOAD DEMO" }));
+    const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("Manual portfolios are never overwritten");
     expect(fetchMock).not.toHaveBeenCalledWith("/api/portfolio/demo", expect.anything());
     fireEvent.click(within(dialog).getByRole("button", { name: "LOAD DEMO" }));
@@ -557,5 +608,53 @@ describe("Investment Tracker", () => {
       "/api/portfolio/demo",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ confirm: "LOAD DEMO" }) }),
     ));
+  });
+  it("reviews Claude's exit-plan proposal, draws its levels and accepts it only on request", async () => {
+    chartMocks.priceLines.length = 0;
+    const fetchMock = createFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    const button = await screen.findByRole("button", { name: "Exit plan · 1 proposal" });
+    await waitFor(() => expect(chartMocks.priceLines.map((line) => line.title)).toEqual(
+      ["Target", "Stop", "Target · proposed", "Stop · proposed"],
+    ));
+    expect(chartMocks.priceLines.map((line) => line.price)).toEqual([780, 720, 800, 700]);
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/exit-plans/plan-1/accept", expect.anything());
+
+    fireEvent.click(button);
+    const drawer = within(await screen.findByRole("dialog"));
+    const card = within(drawer.getByRole("article", { name: "SPY exit plan, proposed" }));
+    expect(card.getByText("Proposed by Claude")).toBeInTheDocument();
+    expect(card.getByText(proposal.reasoning)).toBeInTheDocument();
+    expect(card.getByText("Proposed when the close was 765.37 (Sep 30, 2026)")).toBeInTheDocument();
+    expect(drawer.getByRole("article", { name: "SPY exit plan, accepted" })).toHaveTextContent("My plan");
+    fireEvent.click(card.getByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/exit-plans/plan-1/accept", expect.objectContaining({ method: "POST" }),
+    ));
+
+    fireEvent.click(drawer.getByRole("button", { name: "Replace with my own plan" }));
+    fireEvent.click(drawer.getByRole("button", { name: "Save my plan" }));
+    expect(drawer.getByRole("alert")).toHaveTextContent("Write down why these levels matter.");
+    fireEvent.change(drawer.getByRole("textbox", { name: "Exit plan target price" }), { target: { value: "820" } });
+    fireEvent.change(drawer.getByRole("textbox", { name: "Exit plan reasoning" }), { target: { value: "My level." } });
+    fireEvent.click(drawer.getByRole("button", { name: "Save my plan" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/market/SPY/exit-plans", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ target_price: "820", stop_price: null, review_date: null, reasoning: "My level." }),
+    })));
+  });
+
+  it("lists exit-plan proposals in the Portfolio review queue", async () => {
+    const fetchMock = createFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    const drawer = await openPortfolioView("Alerts · 1");
+    const queue = within(drawer.getByRole("region", { name: "Review queue" }));
+    expect(queue.getByText("Exit plans waiting for review · 1")).toBeInTheDocument();
+    fireEvent.click(queue.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/exit-plans/plan-1/reject", expect.objectContaining({ method: "POST" }),
+    ));
+    expect(await screen.findByText(/exit plan rejected and kept in its history/)).toBeInTheDocument();
   });
 });

@@ -1,12 +1,13 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { getFundamentals, getInsiderActivity, getPeers, resetPeers, savePeers } from "../api";
+import { resetPeers, savePeers } from "../api";
 import { DataPanel } from "../components/ui";
 import { dateOnly, multiple, price, signedPercent, timestamp, usdCompact } from "../lib/format";
 import type { DatedMetric, Fundamentals, InsiderActivity, PeerComparison, PeerRow, ValuationBand } from "../types";
 
-type Loadable<T> = { symbol: string; data: T | null; error: string | null };
+export type Loadable<T> = { symbol: string; data: T | null; error: string | null };
 
-function useSymbolData<T>(symbol: string, load: (symbol: string) => Promise<T>): [Loadable<T> | null, (data: T) => void] {
+/** Load per-ticker data once at page level so summary cards and drawers share one request. */
+export function useSymbolData<T>(symbol: string, load: (symbol: string) => Promise<T>): [Loadable<T> | null, (data: T) => void] {
   const [state, setState] = useState<Loadable<T> | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -80,8 +81,7 @@ function BandRow({ band }: { band: ValuationBand }) {
   );
 }
 
-export function FundamentalsPanel({ symbol }: { symbol: string }) {
-  const [state] = useSymbolData<Fundamentals>(symbol, getFundamentals);
+export function FundamentalsPanel({ state }: { state: Loadable<Fundamentals> | null }) {
   const data = state?.data;
   const meta = data?.applicable ? `TTM · ${dateOnly(data.period.ttm_end)}` : "SEC EDGAR";
   return (
@@ -120,8 +120,7 @@ export function FundamentalsPanel({ symbol }: { symbol: string }) {
   );
 }
 
-export function InsiderPanel({ symbol }: { symbol: string }) {
-  const [state] = useSymbolData<InsiderActivity>(symbol, getInsiderActivity);
+export function InsiderPanel({ state }: { state: Loadable<InsiderActivity> | null }) {
   const data = state?.data;
   return (
     <DataPanel title="Insider activity" meta={data?.applicable ? `FORM 4 · SINCE ${dateOnly(data.since).toUpperCase()}` : "SEC FORM 4"}>
@@ -156,8 +155,17 @@ export function InsiderPanel({ symbol }: { symbol: string }) {
   );
 }
 
-export function PeersPanel({ symbol, onOpenSymbol }: { symbol: string; onOpenSymbol: (symbol: string) => void }) {
-  const [state, setData] = useSymbolData<PeerComparison>(symbol, getPeers);
+export function PeersPanel({
+  symbol,
+  state,
+  setData,
+  onOpenSymbol,
+}: {
+  symbol: string;
+  state: Loadable<PeerComparison> | null;
+  setData: (data: PeerComparison) => void;
+  onOpenSymbol: (symbol: string) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -193,11 +201,10 @@ export function PeersPanel({ symbol, onOpenSymbol }: { symbol: string; onOpenSym
     <DataPanel
       title="Peers"
       meta={meta}
-      className="span-2"
       actions={data?.applicable ? (
         <span className="panel-actions">
           <span>{meta}</span>
-          <button className="action" type="button" onClick={() => { setDraft(data.peers.join(", ")); setEditing((open) => !open); }}>{editing ? "CANCEL" : "EDIT PEERS"}</button>
+          <button className="action" type="button" onClick={() => { setDraft(data.peers.join(", ")); setEditing((open) => !open); }}>{editing ? "Cancel" : "Edit peers"}</button>
         </span>
       ) : undefined}
     >
@@ -208,8 +215,8 @@ export function PeersPanel({ symbol, onOpenSymbol }: { symbol: string; onOpenSym
           {editing && (
             <form className="peer-editor" onSubmit={(event) => void submit(event)}>
               <input aria-label="Peer tickers" placeholder="TSM, UMC, INTC" value={draft} onChange={(event) => setDraft(event.target.value.toUpperCase())} />
-              <button className="action primary" type="submit">SAVE</button>
-              <button className="action" type="button" onClick={() => void reset()}>RESET TO INDUSTRY</button>
+              <button className="action primary" type="submit">Save</button>
+              <button className="action" type="button" onClick={() => void reset()}>Reset to industry</button>
             </form>
           )}
           {saveError && <div className="panel-warning" role="alert">{saveError}</div>}

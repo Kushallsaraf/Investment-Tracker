@@ -332,6 +332,30 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON notes(symbol, created_at DESC);
         """,
     ),
+    (
+        5,
+        """
+        CREATE TABLE IF NOT EXISTS exit_plans (
+            id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            target_price TEXT,
+            stop_price TEXT,
+            review_date TEXT,
+            reasoning TEXT NOT NULL,
+            proposed_by TEXT NOT NULL CHECK (proposed_by IN ('CLAUDE', 'USER')),
+            status TEXT NOT NULL CHECK (status IN ('PROPOSED', 'ACCEPTED', 'REJECTED', 'SUPERSEDED')),
+            reference_price TEXT,
+            reference_date TEXT,
+            note_id TEXT,
+            created_at TEXT NOT NULL,
+            decided_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_exit_plans_symbol_created
+            ON exit_plans(symbol, created_at DESC);
+
+        ALTER TABLE review_triggers ADD COLUMN exit_plan_id TEXT;
+        """,
+    ),
 )
 
 

@@ -2,13 +2,15 @@ import { signedPercent, price } from "../lib/format";
 import type { StripItem } from "../types";
 
 const OPENABLE = new Set(["SPY", "QQQ", "DIA", "IWM"]);
+// The header keeps a short pulse; the rest of the strip belongs to the macro view.
+const PULSE = ["SPY", "QQQ", "^VIX", "^TNX"];
 
 export function MarketStrip({ items, onOpen }: { items: StripItem[] | null; onOpen: (symbol: string) => void }) {
   return (
     <section className="market-strip" aria-label="Market overview">
       {items === null && <span className="strip-note">Loading markets…</span>}
       {items?.length === 0 && <span className="strip-note">Market overview unavailable</span>}
-      {items?.map((item) => {
+      {items?.filter((item) => PULSE.includes(item.symbol)).map((item) => {
         const tone = item.change_pct == null ? "" : item.change_pct >= 0 ? "positive" : "negative";
         const body = (
           <>

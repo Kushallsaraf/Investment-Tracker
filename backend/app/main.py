@@ -13,18 +13,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import settings
-from app.database import Database
-from app.journal_repository import JournalRepository
-from app.market_repository import MarketRepository
 from app.providers.prices import UnsupportedSymbolError
-from app.providers.sec import SecClient, SecNotConfiguredError
-from app.repository import PortfolioRepository
+from app.providers.sec import SecNotConfiguredError
 from app.schemas import (
     ActivityCreate,
     AIReviewCreate,
     ClaudePromptUpsert,
     DecisionUpdate,
     DeletePortfolioDataRequest,
+    ExitPlanCreate,
     InvestmentProfileUpdate,
     LoadDemoRequest,
     NoteCreate,
@@ -35,9 +32,10 @@ from app.schemas import (
     TriggerCreate,
     WatchlistAdd,
 )
-from app.sec_repository import SecRepository
 from app.services.activities import ActivityService
 from app.services.analytics import AnalyticsService
+from app.services.container import build_services
+from app.services.exit_plans import ExitPlanService
 from app.services.fundamentals import FundamentalsService
 from app.services.insiders import InsiderService
 from app.services.journal import JournalService
@@ -45,7 +43,7 @@ from app.services.market import MarketService
 from app.services.peers import PeerService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
-from app.services.sec_data import SecDataService, SecFilerNotFoundError
+from app.services.sec_data import SecFilerNotFoundError
 from app.services.sectors import SectorService
 
 T = TypeVar("T")
@@ -72,21 +70,19 @@ app.add_middleware(
     allowed_hosts=["127.0.0.1", "localhost", "testserver"],
 )
 
-_database = Database()
-_repository = PortfolioRepository(_database)
-_journal_repository = JournalRepository(_database)
-_portfolio_service = PortfolioService(_repository)
-_sector_service = SectorService(_repository)
-_activity_service = ActivityService(_repository)
-_analytics_service = AnalyticsService(_repository, _sector_service)
-_research_service = ResearchService(_journal_repository, _repository, _sector_service)
-_market_service = MarketService(MarketRepository(_database))
-_journal_service = JournalService(_journal_repository, _repository, market=_market_service)
-_sec_repository = SecRepository(_database)
-_sec_data = SecDataService(_sec_repository, SecClient(settings.sec_user_agent))
-_fundamentals_service = FundamentalsService(_sec_data, _market_service)
-_insider_service = InsiderService(_sec_data, _market_service)
-_peer_service = PeerService(_sec_data, _market_service, _fundamentals_service, _sec_repository)
+_services = build_services()
+_portfolio_service = _services.portfolio
+_sector_service = _services.sectors
+_activity_service = _services.activities
+_analytics_service = _services.analytics
+_research_service = _services.research
+_market_service = _services.market
+_journal_service = _services.journal
+_exit_plan_service = _services.exit_plans
+_fundamentals_service = _services.fundamentals
+_insider_service = _services.insiders
+_peer_service = _services.peers
+
 
 def portfolio_service() -> PortfolioService:
     return _portfolio_service
@@ -106,6 +102,10 @@ def analytics_service() -> AnalyticsService:
 
 def journal_service() -> JournalService:
     return _journal_service
+
+
+def exit_plan_service() -> ExitPlanService:
+    return _exit_plan_service
 
 
 def research_service() -> ResearchService:
@@ -274,6 +274,32 @@ def update_note(
 def delete_note(note_id: str, service: JournalService = Depends(journal_service)) -> dict:
     _market_call(lambda: service.delete_note(note_id))
     return {"status": "deleted"}
+
+
+@app.get("/api/exit-plans")
+def list_exit_plans(
+    status: str | None = Query(default=None, max_length=12),
+    service: ExitPlanService = Depends(exit_plan_service),
+) -> dict:
+    return {"plans": _market_call(lambda: service.plans(status=status))}
+
+
+@app.post("/api/market/{symbol}/exit-plans", dependencies=[Depends(require_local_write)])
+def create_exit_plan(
+    symbol: str, request: ExitPlanCreate, service: ExitPlanService = Depends(exit_plan_service)
+) -> dict:
+    values = request.model_dump(mode="json")
+    return {"status": "ok", "plan": _market_call(lambda: service.create_own(symbol, **values))}
+
+
+@app.post("/api/exit-plans/{plan_id}/accept", dependencies=[Depends(require_local_write)])
+def accept_exit_plan(plan_id: str, service: ExitPlanService = Depends(exit_plan_service)) -> dict:
+    return {"status": "ok", "plan": _market_call(lambda: service.accept(plan_id))}
+
+
+@app.post("/api/exit-plans/{plan_id}/reject", dependencies=[Depends(require_local_write)])
+def reject_exit_plan(plan_id: str, service: ExitPlanService = Depends(exit_plan_service)) -> dict:
+    return {"status": "ok", "plan": _market_call(lambda: service.reject(plan_id))}
 
 
 @app.get("/api/watchlist")

@@ -10,6 +10,20 @@ from app.database import Database
 from app.repository import utc_now
 
 
+def _alert_message(trigger: dict[str, Any], observed: str | None) -> str:
+    symbol = trigger["symbol"]
+    if not trigger.get("exit_plan_id"):
+        return f"{symbol} review trigger is due. Review only; no order was created."
+    close = f"closed at {observed}" if observed else "reached its level"
+    if trigger["trigger_type"] == "PRICE_ABOVE":
+        event = f"{symbol} {close}, at or above the exit-plan target of {trigger['upper_value']}."
+    elif trigger["trigger_type"] == "PRICE_BELOW":
+        event = f"{symbol} {close}, at or below the exit-plan stop of {trigger['lower_value']}."
+    else:
+        event = f"{symbol} exit-plan review date has arrived."
+    return f"{event} Review only; no order was created."
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -181,8 +195,8 @@ class JournalRepository:
                 """
                 INSERT INTO review_triggers
                     (id, instrument_id, symbol, trigger_type, lower_value, upper_value,
-                     trigger_date, note, reason, expires_at, state, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+                     trigger_date, note, reason, expires_at, state, created_at, exit_plan_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
                 """,
                 (
                     trigger_id,
@@ -196,6 +210,7 @@ class JournalRepository:
                     values.get("reason", ""),
                     values.get("expires_at"),
                     created_at,
+                    values.get("exit_plan_id"),
                 ),
             )
         return {"id": trigger_id, "created_at": created_at}
@@ -211,7 +226,12 @@ class JournalRepository:
         now = utc_now()
         with self.database.transaction() as connection:
             row = connection.execute(
-                "SELECT symbol, state FROM review_triggers WHERE id = ?", (trigger_id,)
+                """
+                SELECT t.symbol, t.state, t.trigger_type, t.lower_value, t.upper_value,
+                       t.exit_plan_id
+                FROM review_triggers t WHERE t.id = ?
+                """,
+                (trigger_id,),
             ).fetchone()
             if row is None or row["state"] != "ACTIVE":
                 return
@@ -239,7 +259,7 @@ class JournalRepository:
                     uuid.uuid4().hex,
                     trigger_id,
                     now,
-                    f"{row['symbol']} review trigger is due. Review only; no order was created.",
+                    _alert_message(dict(row), evidence.get("observed_value")),
                 ),
             )
 
@@ -248,9 +268,11 @@ class JournalRepository:
             rows = connection.execute(
                 """
                 SELECT a.id, a.trigger_id, a.created_at, a.message,
-                       t.symbol, t.trigger_type, t.state
+                       t.symbol, t.trigger_type, t.state, t.exit_plan_id,
+                       p.reasoning AS exit_plan_reasoning
                 FROM local_alerts a
                 JOIN review_triggers t ON t.id = a.trigger_id
+                LEFT JOIN exit_plans p ON p.id = t.exit_plan_id
                 WHERE a.dismissed_at IS NULL
                 ORDER BY a.created_at DESC
                 """
@@ -411,3 +433,96 @@ class JournalRepository:
             deleted = connection.execute("DELETE FROM notes WHERE id = ?", (note_id,)).rowcount
         if not deleted:
             raise KeyError("Note was not found")
+
+    def exit_plans(self, symbol: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            parameters.append(symbol)
+        if status:
+            clauses.append("status = ?")
+            parameters.append(status)
+        query = "SELECT * FROM exit_plans"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC"
+        with self.database.connect() as connection:
+            rows = connection.execute(query, tuple(parameters)).fetchall()
+        return [dict(row) for row in rows]
+
+    def exit_plan(self, plan_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM exit_plans WHERE id = ?", (plan_id,)).fetchone()
+        return dict(row) if row else None
+
+    def add_exit_plan(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Store a new proposal and retire the same author's older open proposals for that ticker."""
+        plan_id = uuid.uuid4().hex
+        now = utc_now()
+        with self.database.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE exit_plans SET status = 'SUPERSEDED', decided_at = ?
+                WHERE symbol = ? AND proposed_by = ? AND status = 'PROPOSED'
+                """,
+                (now, values["symbol"], values["proposed_by"]),
+            )
+            connection.execute(
+                """
+                INSERT INTO exit_plans
+                    (id, symbol, target_price, stop_price, review_date, reasoning, proposed_by,
+                     status, reference_price, reference_date, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'PROPOSED', ?, ?, ?)
+                """,
+                (
+                    plan_id,
+                    values["symbol"],
+                    values.get("target_price"),
+                    values.get("stop_price"),
+                    values.get("review_date"),
+                    values["reasoning"],
+                    values["proposed_by"],
+                    values.get("reference_price"),
+                    values.get("reference_date"),
+                    now,
+                ),
+            )
+        return self.exit_plan(plan_id) or {}
+
+    def decide_exit_plan(self, plan_id: str, status: str, note_id: str | None = None) -> dict[str, Any]:
+        """Accept or reject an open proposal. Accepting retires the ticker's earlier accepted plan."""
+        now = utc_now()
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT symbol, status FROM exit_plans WHERE id = ?", (plan_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("Exit plan was not found")
+            if row["status"] != "PROPOSED":
+                raise ValueError(f"This exit plan is already {str(row['status']).lower()}")
+            if status == "ACCEPTED":
+                previous = [
+                    item["id"]
+                    for item in connection.execute(
+                        "SELECT id FROM exit_plans WHERE symbol = ? AND status = 'ACCEPTED'",
+                        (row["symbol"],),
+                    ).fetchall()
+                ]
+                for previous_id in previous:
+                    connection.execute(
+                        "UPDATE exit_plans SET status = 'SUPERSEDED', decided_at = ? WHERE id = ?",
+                        (now, previous_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE review_triggers SET state = 'DISMISSED'
+                        WHERE exit_plan_id = ? AND state IN ('ACTIVE', 'TRIGGERED')
+                        """,
+                        (previous_id,),
+                    )
+            connection.execute(
+                "UPDATE exit_plans SET status = ?, decided_at = ?, note_id = ? WHERE id = ?",
+                (status, now, note_id, plan_id),
+            )
+        return self.exit_plan(plan_id) or {}
