@@ -25,6 +25,7 @@ dev = [
 [project.scripts]
 portfolio-manager = "app.main:run"
 investment-tracker-mcp = "app.mcp_server:main"
+investment-tracker-check = "app.check:main"
 
 [tool.setuptools.packages.find]
 where = ["backend"]

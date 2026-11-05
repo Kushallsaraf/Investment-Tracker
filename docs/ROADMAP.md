@@ -35,7 +35,7 @@ explicit "not available" states, and no trading actions.
 
 Moved ahead of news and macro because the MCP server depends on notes.
 
-## Phase 5: Exit plans and the Claude Desktop MCP server (5a and 5b built)
+## Phase 5: Exit plans and the Claude Desktop MCP server (built, except the 5c schedule)
 
 Depends on: chart and technical setup (done), fundamentals and peers (Phase 3),
 notes and shared identity (Phase 4), the existing decision journal and review triggers.
@@ -90,7 +90,7 @@ hosted demo. The in-app AI analyst panel (Ollama plus a free cloud tier) is unch
   providers; assert as-of fields, `NOT AVAILABLE` markers, and that write tools can
   only create proposals.
 
-### 5c. Optional daily price check (not started)
+### 5c. Optional daily price check (command built; launchd schedule not started)
 
 - A `portfolio-manager-check` command refreshes daily bars for symbols with active
   triggers, evaluates them, and sends a macOS notification (`osascript`) with the

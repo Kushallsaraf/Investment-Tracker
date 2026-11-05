@@ -28,12 +28,14 @@ export function AppShell({
   onTab,
   search,
   strip,
+  onMcp,
   children,
 }: PropsWithChildren<{
   activeTab: TopTab;
   onTab: (tab: TopTab) => void;
   search: ReactNode;
   strip: ReactNode;
+  onMcp: () => void;
 }>) {
   return (
     <div className="app-shell">
@@ -44,6 +46,9 @@ export function AppShell({
         </div>
         <div className="header-search">{search}</div>
         {strip}
+        <button type="button" className="header-link" onClick={onMcp}>
+          <span className="header-dot" aria-hidden="true" />MCP Server
+        </button>
         <div className="top-tabs" role="tablist" aria-label="Main views">
           {TOP_TABS.map((tab) => (
             <button type="button" role="tab" key={tab} aria-selected={activeTab === tab} onClick={() => onTab(tab)}>

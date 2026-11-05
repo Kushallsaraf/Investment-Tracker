@@ -15,6 +15,7 @@ import type {
   IncomePayload,
   InsiderActivity,
   InvestmentProfile,
+  McpSetup,
   Note,
   JournalPayload,
   PeerComparison,
@@ -363,4 +364,8 @@ export async function decideExitPlan(planId: string, decision: "accept" | "rejec
     headers: WRITE_HEADERS,
   }));
   return payload.plan;
+}
+
+export async function getMcpSetup(): Promise<McpSetup> {
+  return responseJson<McpSetup>(await fetch("/api/mcp/setup"));
 }

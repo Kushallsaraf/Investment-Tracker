@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { getMarketStrip } from "./api";
 import { AppShell, TOP_TABS, type TopTab } from "./components/AppShell";
+import { Drawer } from "./components/Drawer";
+import { McpSetupPanel } from "./components/McpSetupPanel";
 import { PortfolioApp } from "./portfolio/PortfolioApp";
 import { CommandBar } from "./research/CommandBar";
 import { MarketStrip } from "./research/MarketStrip";
@@ -43,6 +45,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<TopTab>(route.tab);
   const [symbol, setSymbol] = useState(route.symbol);
   const [strip, setStrip] = useState<StripItem[] | null>(null);
+  const [mcpOpen, setMcpOpen] = useState(false);
 
   const loadStrip = useCallback(() => {
     void getMarketStrip().then(setStrip).catch(() => setStrip([]));
@@ -82,8 +85,12 @@ export function App() {
       onTab={selectTab}
       search={<CommandBar onSubmit={openSymbol} />}
       strip={<MarketStrip items={strip} onOpen={openSymbol} />}
+      onMcp={() => setMcpOpen(true)}
     >
       {activeTab === "Research" ? <ResearchView symbol={symbol} onOpenSymbol={openSymbol} /> : <PortfolioApp onOpenSymbol={openSymbol} />}
+      <Drawer open={mcpOpen} eyebrow="Claude Desktop" title="MCP Server" subtitle="Connect Claude to your research data" onClose={() => setMcpOpen(false)}>
+        <McpSetupPanel />
+      </Drawer>
     </AppShell>
   );
 }

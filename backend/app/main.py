@@ -40,6 +40,7 @@ from app.services.fundamentals import FundamentalsService
 from app.services.insiders import InsiderService
 from app.services.journal import JournalService
 from app.services.market import MarketService
+from app.services.mcp_setup import setup_info
 from app.services.peers import PeerService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
@@ -163,6 +164,11 @@ def _market_call(action: Callable[[], T]) -> T:
         raise HTTPException(
             status_code=502, detail=f"Market data is unavailable ({type(exc).__name__}); try again later"
         ) from exc
+
+
+@app.get("/api/mcp/setup")
+def mcp_setup() -> dict:
+    return setup_info()
 
 
 @app.get("/api/health")

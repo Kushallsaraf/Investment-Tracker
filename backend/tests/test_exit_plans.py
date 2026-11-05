@@ -138,6 +138,6 @@ def test_crossing_an_accepted_level_alerts_with_the_original_reasoning(tmp_path:
     assert alert["exit_plan_id"] == plan["id"]
     assert alert["exit_plan_reasoning"] == plan["reasoning"]
     assert alert["message"] == (
-        f"WATCH closed at {LAST_CLOSE}, at or above the exit-plan target of {plan['target_price']}. "
+        f"WATCH closed at {LAST_CLOSE:.2f}, at or above the exit-plan target of {plan['target_price']}. "
         "Review only; no order was created."
     )

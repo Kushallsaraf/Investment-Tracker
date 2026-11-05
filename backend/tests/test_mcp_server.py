@@ -9,6 +9,9 @@ import pytest
 from app.database import Database
 from app.mcp_server import NOT_AVAILABLE, create_server, mark_missing
 from app.services.container import Services, build_services
+from app.services.mcp_setup import READ_TOOLS as SETUP_READ_TOOLS
+from app.services.mcp_setup import WRITE_TOOLS as SETUP_WRITE_TOOLS
+from app.services.mcp_setup import setup_info
 from fakes import FakeHistory, FakePrices, FakeSec, listing, synthetic_bars
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -154,3 +157,14 @@ def test_mark_missing_is_recursive() -> None:
         "b": [1, NOT_AVAILABLE],
         "c": {"d": NOT_AVAILABLE},
     }
+
+
+def test_setup_info_matches_the_registered_tools(tmp_path: Path) -> None:
+    assert set(SETUP_READ_TOOLS) == READ_TOOLS
+    assert set(SETUP_WRITE_TOOLS) == WRITE_TOOLS
+    info = setup_info()
+    server = info["config"]["mcpServers"]["investment-tracker"]
+    assert server["args"] == ["-m", "app.mcp_server"]
+    assert server["env"]["PYTHONPATH"].endswith("/backend")
+    assert Path(server["command"]).name.startswith("python")
+    assert info["checks"]["mcp_package"]["ok"] is True

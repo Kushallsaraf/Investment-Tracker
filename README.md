@@ -130,6 +130,10 @@ this computer and uses the same database and services as the dashboard.
 - **Prompt:** "Full stock analysis" takes a ticker. Its text lives in
   `backend/app/prompts/full_stock_analysis.md`; replace it with your own.
 
+The **MCP Server** button in the app's header opens these steps with this
+computer's paths already filled in, checks that Python and the `mcp` package are
+installed, and has a Copy button for the configuration.
+
 To connect it:
 
 1. Install the project (see Development setup), which installs the `mcp` package.
@@ -143,6 +147,20 @@ The server reads the same data folder as the app (`~/.portfolio-manager` unless
 `PORTFOLIO_MANAGER_HOME` is set). If the project lives in Desktop or Documents,
 macOS may ask to give Claude access to that folder. Logs go to Claude Desktop's MCP
 log, never to stdout.
+
+## Daily check
+
+`./scripts/check` refreshes daily prices for every ticker with an open review
+trigger (and the portfolio valuation), checks the triggers, and shows a macOS
+notification for each due alert with the level and the exit plan's reasoning.
+
+- Each alert is notified once, including alerts the dashboard already found. If a
+  notification fails, the next run tries it again.
+- `./scripts/check --no-notify` prints what is due without notifying or marking
+  anything as sent; `--json` prints the full result.
+- A ticker whose prices can't be refreshed is reported, and its saved close is
+  used, marked stale (stale closes never fire price triggers).
+- Run it after the US close. There is no automatic schedule yet.
 
 ## Sector allocation
 

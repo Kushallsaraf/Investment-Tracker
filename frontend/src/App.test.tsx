@@ -247,6 +247,14 @@ function createFetch(overrides: Record<string, unknown> = {}) {
       warnings: ["Income is calculated only from activities recorded in this application."],
     } });
     if (url === "/api/journal") return response({ journal });
+    if (url === "/api/mcp/setup") return response({
+      server_name: "investment-tracker",
+      config: { mcpServers: { "investment-tracker": { command: "/repo/.venv/bin/python", args: ["-m", "app.mcp_server"], env: { PYTHONPATH: "/repo/backend", PORTFOLIO_MANAGER_SEC_USER_AGENT: "Your Name your.email@example.com" } } } },
+      checks: { python: { ok: true, detail: "/repo/.venv/bin/python" }, mcp_package: { ok: true, detail: "Installed" }, sec_contact: { ok: false, detail: "Replace the placeholder with your name and email" } },
+      data_folder: "/home/.portfolio-manager", config_file: "~/Library/Application Support/Claude/claude_desktop_config.json",
+      read_tools: { get_quote: "Latest daily close and change" }, write_tools: { save_exit_plan: "Saves an exit plan as a proposal" },
+      prompt: "Full stock analysis",
+    });
     if (url === "/api/exit-plans?status=PROPOSED") return response({ plans: [proposal] });
     if (/^\/api\/market\/[^/]+\/exit-plans$/.test(url)) return response({ status: "ok", plan: { ...proposal, id: "plan-2", proposed_by: "USER", status: "ACCEPTED" } });
     if (url === "/api/research/prompts") return response({ prompts: [{
@@ -656,5 +664,21 @@ describe("Investment Tracker", () => {
       "/api/exit-plans/plan-1/reject", expect.objectContaining({ method: "POST" }),
     ));
     expect(await screen.findByText(/exit plan rejected and kept in its history/)).toBeInTheDocument();
+  });
+  it("opens MCP setup instructions with this computer's paths", async () => {
+    vi.stubGlobal("fetch", createFetch());
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "MCP Server" }));
+    const drawer = within(await screen.findByRole("dialog", { name: "MCP Server" }));
+    const config = await drawer.findByLabelText("Claude Desktop configuration");
+    expect(config).toHaveTextContent('"command": "/repo/.venv/bin/python"');
+    expect(config).toHaveTextContent('"PYTHONPATH": "/repo/backend"');
+    expect(drawer.getByText(/Needs attention · Replace the placeholder/)).toBeInTheDocument();
+    expect(drawer.getByText("save_exit_plan")).toBeInTheDocument();
+    fireEvent.click(drawer.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"app.mcp_server"')));
+    expect(await drawer.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 });

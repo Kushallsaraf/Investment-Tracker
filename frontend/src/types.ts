@@ -602,3 +602,16 @@ export type SymbolJournal = {
   notes: Note[];
   exit_plans: ExitPlan[];
 };
+
+export type McpCheck = { ok: boolean; detail: string };
+
+export type McpSetup = {
+  server_name: string;
+  config: { mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> };
+  checks: { python: McpCheck; mcp_package: McpCheck; sec_contact: McpCheck };
+  data_folder: string;
+  config_file: string;
+  read_tools: Record<string, string>;
+  write_tools: Record<string, string>;
+  prompt: string;
+};

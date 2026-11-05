@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from app.database import Database
@@ -14,7 +15,7 @@ def _alert_message(trigger: dict[str, Any], observed: str | None) -> str:
     symbol = trigger["symbol"]
     if not trigger.get("exit_plan_id"):
         return f"{symbol} review trigger is due. Review only; no order was created."
-    close = f"closed at {observed}" if observed else "reached its level"
+    close = f"closed at {Decimal(observed).quantize(Decimal('0.01'))}" if observed else "reached its level"
     if trigger["trigger_type"] == "PRICE_ABOVE":
         event = f"{symbol} {close}, at or above the exit-plan target of {trigger['upper_value']}."
     elif trigger["trigger_type"] == "PRICE_BELOW":
@@ -267,7 +268,7 @@ class JournalRepository:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT a.id, a.trigger_id, a.created_at, a.message,
+                SELECT a.id, a.trigger_id, a.created_at, a.message, a.notified_at,
                        t.symbol, t.trigger_type, t.state, t.exit_plan_id,
                        p.reasoning AS exit_plan_reasoning
                 FROM local_alerts a
@@ -278,6 +279,13 @@ class JournalRepository:
                 """
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def mark_alert_notified(self, alert_id: str) -> None:
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE local_alerts SET notified_at = ? WHERE id = ? AND notified_at IS NULL",
+                (utc_now(), alert_id),
+            )
 
     def prompts(self) -> list[dict[str, Any]]:
         with self.database.connect() as connection:

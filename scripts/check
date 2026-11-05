@@ -1,0 +1,13 @@
+#!/bin/sh
+# Daily review check: refresh prices for open triggers and notify about any that are due.
+set -eu
+
+PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a
+  . "$PROJECT_DIR/.env"
+  set +a
+fi
+
+PYTHONPATH="$PROJECT_DIR/backend" exec "$PROJECT_DIR/.venv/bin/python" -m app.check "$@"

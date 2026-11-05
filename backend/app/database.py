@@ -356,6 +356,12 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         ALTER TABLE review_triggers ADD COLUMN exit_plan_id TEXT;
         """,
     ),
+    (
+        6,
+        """
+        ALTER TABLE local_alerts ADD COLUMN notified_at TEXT;
+        """,
+    ),
 )
 
 
