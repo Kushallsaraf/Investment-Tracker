@@ -79,11 +79,11 @@ export function McpSetupPanel() {
 
       <section className="setup-section" aria-label="Using it">
         <h3>Use it</h3>
-        <ul className="setup-steps" style={{ listStyle: "none" }}>
-          <li style={{ paddingLeft: 0 }}>Ask in plain English, for example "What's the technical setup on GFS?" Claude asks before using each tool for the first time.</li>
-          <li style={{ paddingLeft: 0 }}>Run <strong>{setup.prompt}</strong> from the prompts menu (+) with a ticker. It ends by offering to save an exit plan.</li>
-          <li style={{ paddingLeft: 0 }}>Review proposals under Research → Exit plan or Portfolio → Alerts. Nothing changes until you accept.</li>
-        </ul>
+        <ol className="setup-steps">
+          <li>Ask in plain English, for example "What's the technical setup on GFS?" Claude asks before using each tool for the first time.</li>
+          <li>Run <strong>{setup.prompt}</strong> from the prompts menu (+) with a ticker. It ends by offering to save an exit plan.</li>
+          <li>Review proposals under Research → Exit plan or Portfolio → Alerts. Nothing changes until you accept.</li>
+        </ol>
       </section>
 
       <section className="setup-section" aria-label="Tools">
