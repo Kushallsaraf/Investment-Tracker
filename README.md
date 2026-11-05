@@ -70,6 +70,12 @@ market pulse (SPY, QQQ, VIX, and the 10-year yield).
   - **Notes:** notes per ticker, optionally pinned to a date and shown as chart
     markers (click a candle to pin a note there), your decision for any ticker
     (held or not), and its open review triggers.
+  - **News:** headlines from the Yahoo Finance and Nasdaq RSS feeds plus 8-K filings
+    from the last 30 days, with each 8-K's item numbers translated (for example
+    "Earnings results"). Headlines are scored positive, neutral, or negative by
+    FinBERT running on this computer, with a 7-day trend. Headlines are cached and
+    refetched at most every 30 minutes, and each one is scored once. Sentiment rates
+    the wording of headlines, not the stock.
   - **Strategies:** a placeholder until the strategy engine lands.
 - **Exit plan** shows Claude's proposals with Accept and Reject, the accepted
   plan, and a form to write your own. See [Exit plans](#exit-plans).
@@ -122,7 +128,7 @@ server for Claude Desktop (it works with a Claude Pro plan). It runs over stdio 
 this computer and uses the same database and services as the dashboard.
 
 - **Read tools:** `get_quote`, `get_chart_summary`, `get_fundamentals`, `get_peers`,
-  `get_insider_activity`, `get_my_notes`, `get_watchlist`, `get_position`. Every
+  `get_insider_activity`, `get_news_sentiment`, `get_my_notes`, `get_watchlist`, `get_position`. Every
   response carries as-of dates, and missing values read `NOT AVAILABLE` instead of
   being left blank.
 - **Write tools:** `add_note`, `add_to_watchlist`, and `save_exit_plan`. The last
@@ -186,6 +192,15 @@ notification for each due alert with the level and the exit plan's reasoning.
 ```
 
 Then open `http://127.0.0.1:5173`.
+
+Headline sentiment needs FinBERT, which is optional because PyTorch is large:
+
+```bash
+.venv/bin/pip install -e ".[sentiment]"
+```
+
+The model (about 440 MB) downloads on first use and is cached. Without it, headlines
+still show and sentiment reads "not available".
 
 To run all tests and the production frontend build:
 

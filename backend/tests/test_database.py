@@ -16,7 +16,7 @@ def test_schema_is_created_once_and_migrations_are_idempotent(tmp_path: Path) ->
         tables = {
             row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-    assert versions == [1, 2, 3, 4, 5, 6]
+    assert versions == [1, 2, 3, 4, 5, 6, 7]
     expected = {
         "instruments", "positions", "activities", "ai_reviews",
         "price_bars", "watchlist", "notes", "exit_plans",

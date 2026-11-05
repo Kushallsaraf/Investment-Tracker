@@ -181,6 +181,19 @@ const acceptedPlan = {
   reasoning: "Earlier plan.", proposed_by: "USER", status: "ACCEPTED", decided_at: "2026-09-20T12:00:00Z",
 };
 
+const newsPayload = {
+  symbol: "SPY", window_days: 7,
+  headlines: [
+    { id: "n1", kind: "HEADLINE", title: "Synthetic Inc. posts record margin", summary: "Margins rose.", url: "https://example.com/n1", publisher: "Wire", published_at: "2026-11-04T21:00:00+00:00", sentiment: { label: "positive", net: 0.85, positive: 0.9, neutral: 0.05, negative: 0.05, model: "ProsusAI/finbert" } },
+    { id: "n2", kind: "HEADLINE", title: "Synthetic Inc. guidance disappoints", summary: null, url: "https://example.com/n2", publisher: "Yahoo Finance", published_at: "2026-11-03T13:00:00+00:00", sentiment: { label: "negative", net: -0.7, positive: 0.1, neutral: 0.1, negative: 0.8, model: "ProsusAI/finbert" } },
+  ],
+  filings: [{ id: "f1", kind: "FILING", title: "8-K: Earnings results", summary: null, url: "https://www.sec.gov/Archives/f1", publisher: "SEC EDGAR", published_at: "2026-11-04T00:00:00+00:00", sentiment: null }],
+  sentiment: { available: true, reason: null, model: "ProsusAI/finbert", net: 0.075, counts: { positive: 1, neutral: 0, negative: 1 }, scored: 2,
+    trend: ["2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"].map((date) => ({ date, count: date === "2026-11-04" || date === "2026-11-03" ? 1 : 0, net: date === "2026-11-04" ? 0.85 : date === "2026-11-03" ? -0.7 : null })) },
+  latest_published_at: "2026-11-04T21:00:00+00:00", fetched_at: "2026-11-05T12:00:00+00:00", stale: false, warnings: [],
+  sources: ["Yahoo Finance RSS", "Nasdaq RSS", "SEC EDGAR 8-K filings"],
+};
+
 function journalFor(symbol: string, decision: string | null = null) {
   return {
     symbol, instrument_id: decision ? "instrument-9" : null,
@@ -221,6 +234,7 @@ function createFetch(overrides: Record<string, unknown> = {}) {
       return response(journalFor(symbol));
     }
     if (/^\/api\/market\/[^/]+\/insiders\?days=90$/.test(url)) return response(insiders);
+    if (/^\/api\/market\/[^/]+\/news$/.test(url)) return response(newsPayload);
     if (/^\/api\/market\/[^/]+\/peers$/.test(url)) {
       if (method === "PUT") return response({ ...peers, peers: JSON.parse(String(init?.body)).symbols, list_source: "USER" });
       return response(peers);
@@ -680,5 +694,20 @@ describe("Investment Tracker", () => {
     fireEvent.click(drawer.getByRole("button", { name: "Copy" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"app.mcp_server"')));
     expect(await drawer.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+  it("summarizes headline sentiment and lists headlines and 8-K filings", async () => {
+    vi.stubGlobal("fetch", createFetch());
+    render(<App />);
+    const summary = within(await screen.findByRole("region", { name: "Summary" }));
+    expect(await summary.findByText("Mixed +0.07")).toBeInTheDocument();
+    expect(summary.getByText("2 headlines in 7 days · 1 8-K")).toBeInTheDocument();
+    const drawer = await openSummaryCard(/^News/);
+    expect(drawer.getByText("1 positive · 0 neutral · 1 negative")).toBeInTheDocument();
+    expect(drawer.getByRole("img", { name: /Daily headline sentiment/ })).toHaveAccessibleName(expect.stringContaining("+0.85"));
+    expect(drawer.getByRole("link", { name: "Synthetic Inc. posts record margin" })).toHaveAttribute("href", "https://example.com/n1");
+    expect(drawer.getByText("positive +0.85")).toBeInTheDocument();
+    expect(drawer.getByText("negative −0.70")).toBeInTheDocument();
+    expect(drawer.getByRole("link", { name: "8-K: Earnings results" })).toBeInTheDocument();
+    expect(drawer.getByText(/not a signal/)).toBeInTheDocument();
   });
 });

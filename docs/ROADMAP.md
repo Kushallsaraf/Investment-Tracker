@@ -99,7 +99,7 @@ hosted demo. The in-app AI analyst panel (Ollama plus a free cloud tier) is unch
   by default, with an install and uninstall script. There is no real-time feed, so
   daily is the honest cadence.
 
-## Phase 6: News and sentiment
+## Phase 6: News and sentiment (built)
 
 - Headlines from free RSS feeds and SEC 8-K filings; FinBERT scores run locally,
   with a 7-day trend. Adds the `get_news_sentiment` MCP tool.

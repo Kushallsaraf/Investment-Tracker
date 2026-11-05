@@ -41,6 +41,7 @@ from app.services.insiders import InsiderService
 from app.services.journal import JournalService
 from app.services.market import MarketService
 from app.services.mcp_setup import setup_info
+from app.services.news import NewsService
 from app.services.peers import PeerService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
@@ -83,6 +84,7 @@ _exit_plan_service = _services.exit_plans
 _fundamentals_service = _services.fundamentals
 _insider_service = _services.insiders
 _peer_service = _services.peers
+_news_service = _services.news
 
 
 def portfolio_service() -> PortfolioService:
@@ -107,6 +109,10 @@ def journal_service() -> JournalService:
 
 def exit_plan_service() -> ExitPlanService:
     return _exit_plan_service
+
+
+def news_service() -> NewsService:
+    return _news_service
 
 
 def research_service() -> ResearchService:
@@ -245,6 +251,11 @@ def update_market_peers(
 def reset_market_peers(symbol: str, service: PeerService = Depends(peer_service)) -> dict:
     _sec_call(lambda: service.reset(symbol))
     return _sec_call(lambda: service.comparison(symbol))
+
+
+@app.get("/api/market/{symbol}/news")
+def market_news(symbol: str, service: NewsService = Depends(news_service)) -> dict:
+    return _market_call(lambda: service.news(symbol))
 
 
 @app.get("/api/market/{symbol}/journal")

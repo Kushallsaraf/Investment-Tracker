@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +23,25 @@ READ_TOOLS = {
     "get_fundamentals",
     "get_peers",
     "get_insider_activity",
+    "get_news_sentiment",
     "get_my_notes",
     "get_watchlist",
     "get_position",
 }
 WRITE_TOOLS = {"add_note", "add_to_watchlist", "save_exit_plan"}
+
+
+class StaticNews:
+    def headlines(self, symbol: str) -> dict[str, Any]:
+        item = {
+            "title": "Acme wins a large contract",
+            "summary": None,
+            "url": "https://example.com/acme",
+            "published_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "publisher": "Wire",
+            "feed": "Yahoo Finance",
+        }
+        return {"items": [item], "failures": {}, "fetched_at": item["published_at"]}
 
 
 class OfflineSec(FakeSec):
@@ -42,7 +57,12 @@ def _services(tmp_path: Path, sec: Any = None) -> Services:
         }
     )
     return build_services(
-        Database(tmp_path / "mcp.sqlite3"), history=history, prices=FakePrices(), sec_client=sec or FakeSec()
+        Database(tmp_path / "mcp.sqlite3"),
+        history=history,
+        prices=FakePrices(),
+        sec_client=sec or FakeSec(),
+        news=StaticNews(),
+        scorer=None,
     )
 
 
@@ -95,6 +115,16 @@ def test_read_tools_carry_dates_and_explicit_missing_markers(tmp_path: Path) -> 
         asyncio.run(server.call_tool("get_quote", {"symbol": "XIC.TO"}))
     with pytest.raises(ToolError, match="between 30 and 365"):
         asyncio.run(server.call_tool("get_insider_activity", {"symbol": "ACME", "days": 5}))
+
+
+def test_news_sentiment_marks_missing_scores(tmp_path: Path) -> None:
+    server = create_server(_services(tmp_path))
+    news = _call(server, "get_news_sentiment", symbol="ACME")
+    assert news["headlines"][0]["title"] == "Acme wins a large contract"
+    assert news["headlines"][0]["sentiment"] == NOT_AVAILABLE
+    assert news["sentiment"]["available"] is False
+    assert "not installed" in news["sentiment"]["reason"]
+    assert news["fetched_at"] != NOT_AVAILABLE
 
 
 def test_unreachable_sources_are_reported_as_not_available(tmp_path: Path) -> None:

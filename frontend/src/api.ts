@@ -16,6 +16,7 @@ import type {
   InsiderActivity,
   InvestmentProfile,
   McpSetup,
+  NewsPayload,
   Note,
   JournalPayload,
   PeerComparison,
@@ -368,4 +369,8 @@ export async function decideExitPlan(planId: string, decision: "accept" | "rejec
 
 export async function getMcpSetup(): Promise<McpSetup> {
   return responseJson<McpSetup>(await fetch("/api/mcp/setup"));
+}
+
+export async function getNews(symbol: string): Promise<NewsPayload> {
+  return responseJson<NewsPayload>(await fetch(`/api/market/${encodeURIComponent(symbol)}/news`));
 }

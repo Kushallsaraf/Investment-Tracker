@@ -362,6 +362,35 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         ALTER TABLE local_alerts ADD COLUMN notified_at TEXT;
         """,
     ),
+    (
+        7,
+        """
+        CREATE TABLE IF NOT EXISTS news_items (
+            id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('HEADLINE', 'FILING')),
+            title TEXT NOT NULL,
+            summary TEXT,
+            url TEXT NOT NULL,
+            publisher TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            positive REAL,
+            neutral REAL,
+            negative REAL,
+            sentiment_model TEXT,
+            scored_at TEXT,
+            first_seen_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_news_items_symbol_published
+            ON news_items(symbol, published_at DESC);
+
+        CREATE TABLE IF NOT EXISTS news_fetches (
+            symbol TEXT PRIMARY KEY,
+            fetched_at TEXT NOT NULL,
+            failures_json TEXT NOT NULL DEFAULT '{}'
+        );
+        """,
+    ),
 )
 
 

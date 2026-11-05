@@ -134,6 +134,13 @@ def create_server(services: Services | None = None) -> MCPServer:
         return _read(lambda: svc.insiders.activity(symbol, days=days), symbol)
 
     @server.tool(annotations=READ)
+    def get_news_sentiment(symbol: str) -> dict[str, Any]:
+        """Recent headlines (Yahoo Finance and Nasdaq RSS) with FinBERT sentiment scored on this
+        computer, a 7-day daily trend, and 8-K filings from the last 30 days. Sentiment describes
+        the wording of headlines, not the stock."""
+        return _read(lambda: svc.news.news(symbol), symbol)
+
+    @server.tool(annotations=READ)
     def get_my_notes(symbol: str) -> dict[str, Any]:
         """The investor's notes, current decision, open review triggers, and exit plans for a ticker."""
         return _read(lambda: svc.journal.symbol_journal(symbol), symbol)

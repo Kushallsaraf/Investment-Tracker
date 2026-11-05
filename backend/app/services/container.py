@@ -9,6 +9,8 @@ from app.config import settings
 from app.database import Database
 from app.journal_repository import JournalRepository
 from app.market_repository import MarketRepository
+from app.news_repository import NewsRepository
+from app.providers.news import RssNewsProvider
 from app.providers.sec import SecClient
 from app.repository import PortfolioRepository
 from app.sec_repository import SecRepository
@@ -19,11 +21,13 @@ from app.services.fundamentals import FundamentalsService
 from app.services.insiders import InsiderService
 from app.services.journal import JournalService
 from app.services.market import MarketService
+from app.services.news import NewsService
 from app.services.peers import PeerService
 from app.services.portfolio import PortfolioService
 from app.services.research import ResearchService
 from app.services.sec_data import SecDataService
 from app.services.sectors import SectorService
+from app.services.sentiment import default_scorer
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,7 @@ class Services:
     fundamentals: FundamentalsService
     insiders: InsiderService
     peers: PeerService
+    news: NewsService
 
 
 def build_services(
@@ -50,8 +55,13 @@ def build_services(
     history: Any = None,
     prices: Any = None,
     sec_client: Any = None,
+    news: Any = None,
+    scorer: Any = "auto",
 ) -> Services:
-    """Build every service on one database. Tests pass fake providers; the app uses the real ones."""
+    """Build every service on one database. Tests pass fake providers; the app uses the real ones.
+
+    `scorer="auto"` uses FinBERT when it is installed; pass None to turn sentiment off.
+    """
     database = database or Database()
     portfolio_repository = PortfolioRepository(database)
     journal_repository = JournalRepository(database)
@@ -76,4 +86,11 @@ def build_services(
         fundamentals=fundamentals,
         insiders=InsiderService(sec, market),
         peers=PeerService(sec, market, fundamentals, sec_repository),
+        news=NewsService(
+            NewsRepository(database),
+            news or RssNewsProvider(),
+            sec=sec,
+            market=market,
+            scorer=default_scorer() if scorer == "auto" else scorer,
+        ),
     )

@@ -4,6 +4,7 @@ import {
   getChart,
   getFundamentals,
   getInsiderActivity,
+  getNews,
   getPeers,
   getSymbolJournal,
   getTechnicals,
@@ -19,12 +20,14 @@ import type {
   ChartRange,
   Fundamentals,
   InsiderActivity,
+  NewsPayload,
   PeerComparison,
   SymbolJournal,
   Technicals,
   WatchlistItem,
 } from "../types";
 import { ExitPlanPanel } from "./ExitPlanPanel";
+import { NewsPanel, sentimentWord } from "./NewsPanel";
 import { NotesPanel } from "./NotesPanel";
 import { type ChartType, type LowerPane, type Overlay, OVERLAY_LABELS, PriceChart, type PriceLevel } from "./PriceChart";
 import { FundamentalsPanel, InsiderPanel, type Loadable, PeersPanel, useSymbolData } from "./SecPanels";
@@ -36,7 +39,7 @@ const CHART_PREFS_KEY = "investment-tracker.chart-prefs.v1";
 type ChartPrefs = { range: ChartRange; chartType: ChartType; overlays: Overlay[]; lowerPane: LowerPane };
 const DEFAULT_PREFS: ChartPrefs = { range: "1Y", chartType: "candle", overlays: ["ema20", "ema50", "sma200"], lowerPane: "rsi" };
 
-type DrawerKey = "tech" | "fund" | "insiders" | "peers" | "notes" | "exit" | "ai" | "strategy" | "data";
+type DrawerKey = "tech" | "fund" | "insiders" | "peers" | "news" | "notes" | "exit" | "ai" | "strategy" | "data";
 
 function loadPrefs(): ChartPrefs {
   try {
@@ -79,6 +82,7 @@ export function ResearchView({ symbol, onOpenSymbol }: { symbol: string; onOpenS
   const [fundamentals] = useSymbolData<Fundamentals>(symbol, getFundamentals);
   const [insiders] = useSymbolData<InsiderActivity>(symbol, getInsiderActivity);
   const [peers, setPeers] = useSymbolData<PeerComparison>(symbol, getPeers);
+  const [news] = useSymbolData<NewsPayload>(symbol, getNews);
 
   function updatePrefs(next: Partial<ChartPrefs>) {
     setPrefs((current) => {
@@ -145,7 +149,7 @@ export function ResearchView({ symbol, onOpenSymbol }: { symbol: string; onOpenS
     }
   }
 
-  const signals = signalCards({ technicals, fundamentals, insiders, peers, journal: currentJournal });
+  const signals = signalCards({ technicals, fundamentals, insiders, peers, news, journal: currentJournal });
   const decision = currentJournal?.decision?.decision ?? "WATCH";
   const exitPlans = currentJournal?.exit_plans ?? [];
   const proposals = exitPlans.filter((plan) => plan.status === "PROPOSED");
@@ -286,6 +290,9 @@ export function ResearchView({ symbol, onOpenSymbol }: { symbol: string; onOpenS
       <Drawer open={drawer === "peers"} eyebrow={symbol} title="Peers" subtitle="Trailing-twelve-month figures from each company's filings" wide onClose={close}>
         <PeersPanel symbol={symbol} state={peers} setData={setPeers} onOpenSymbol={(next) => { close(); onOpenSymbol(next); }} />
       </Drawer>
+      <Drawer open={drawer === "news"} eyebrow={symbol} title="News and sentiment" subtitle="Yahoo Finance and Nasdaq headlines · SEC 8-K filings" onClose={close}>
+        <NewsPanel state={news} />
+      </Drawer>
       <Drawer open={drawer === "notes"} eyebrow={symbol} title="Notes and decision" subtitle="Saved on this computer" onClose={close}>
         <NotesPanel symbol={symbol} journal={currentJournal} selectedDate={selectedDate} onChanged={(next) => (next ? setJournal(next) : loadJournal())} />
       </Drawer>
@@ -330,12 +337,14 @@ function signalCards({
   fundamentals,
   insiders,
   peers,
+  news,
   journal,
 }: {
   technicals: Technicals | null;
   fundamentals: Loadable<Fundamentals> | null;
   insiders: Loadable<InsiderActivity> | null;
   peers: Loadable<PeerComparison> | null;
+  news: Loadable<NewsPayload> | null;
   journal: SymbolJournal | null;
 }): SignalCard[] {
   const trend: SignalCard = technicals
@@ -383,6 +392,26 @@ function signalCards({
     };
   });
 
+  const headlines = news?.data?.headlines.length ?? 0;
+  const newsCard: SignalCard = !news
+    ? { key: "news", label: "News", value: "…", detail: "Loading headlines" }
+    : news.error || !news.data
+      ? { key: "news", label: "News", value: "N/A", detail: news.error ?? "Not available" }
+      : news.data.sentiment.available
+        ? {
+            key: "news",
+            label: "News",
+            value: `${sentimentWord(news.data.sentiment.net)} ${news.data.sentiment.net >= 0 ? "+" : "−"}${Math.abs(news.data.sentiment.net).toFixed(2)}`,
+            tone: news.data.sentiment.net >= 0.15 ? "positive" : news.data.sentiment.net <= -0.15 ? "negative" : undefined,
+            detail: `${news.data.sentiment.scored} headline${news.data.sentiment.scored === 1 ? "" : "s"} in 7 days${news.data.filings.length ? ` · ${news.data.filings.length} 8-K` : ""}`,
+          }
+        : {
+            key: "news",
+            label: "News",
+            value: `${headlines} headline${headlines === 1 ? "" : "s"}`,
+            detail: `Sentiment not available · ${news.data.sentiment.reason}`,
+          };
+
   const noteCount = journal?.notes.length ?? 0;
   const latest = journal?.notes[0]?.body;
   const notes: SignalCard = {
@@ -393,7 +422,7 @@ function signalCards({
   };
 
   const strategies: SignalCard = { key: "strategy", label: "Strategies", value: "None yet", detail: "Planned · rules you write, tested on history", planned: true };
-  return [trend, valuation, insider, peer, notes, strategies];
+  return [trend, valuation, insider, peer, newsCard, notes, strategies];
 }
 
 function loadableCard<T>(

@@ -615,3 +615,46 @@ export type McpSetup = {
   write_tools: Record<string, string>;
   prompt: string;
 };
+
+export type HeadlineSentiment = {
+  label: "positive" | "neutral" | "negative";
+  net: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  model: string;
+};
+
+export type NewsItem = {
+  id: string;
+  kind: "HEADLINE" | "FILING";
+  title: string;
+  summary: string | null;
+  url: string;
+  publisher: string;
+  published_at: string;
+  sentiment: HeadlineSentiment | null;
+};
+
+export type NewsPayload = {
+  symbol: string;
+  window_days: number;
+  headlines: NewsItem[];
+  filings: NewsItem[];
+  sentiment:
+    | { available: false; reason: string; model: null; trend: []; counts: null }
+    | {
+        available: true;
+        reason: string | null;
+        model: string;
+        net: number;
+        counts: { positive: number; neutral: number; negative: number };
+        scored: number;
+        trend: Array<{ date: string; count: number; net: number | null }>;
+      };
+  latest_published_at: string | null;
+  fetched_at: string | null;
+  stale: boolean;
+  warnings: string[];
+  sources: string[];
+};
