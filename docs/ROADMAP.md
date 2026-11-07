@@ -114,6 +114,31 @@ hosted demo. The in-app AI analyst panel (Ollama plus a free cloud tier) is unch
 - Adds the `get_macro_snapshot` MCP tool. The sector heatmap was dropped as not
   worth the space.
 
+## Optional: Plain-English macro explainers (undecided)
+
+FinBERT only labels sentiment, so explanations need a generative model. The default
+is Qwen 2.5 7B through Ollama, which runs on this Mac for free and keeps everything
+local. If built, this becomes the first piece of Phase 8.
+
+- **Story grouping.** Group the week's headlines into stories by theme and similar
+  wording, so each story gets one explainer.
+- **Headlines only, stated plainly.** The model works from the story's headlines and
+  feed summaries, not the full articles, and every explainer says so. No extra data
+  is added to the prompt, to keep a local model fast. The one exception is the
+  holdings in the story's sectors, needed for "what it means for you".
+- **Model connection.** A small Ollama client with the model set in `.env` (default
+  `qwen2.5:7b`), built so a cloud model can be added later.
+- **Explainer format.** What happened, why, why markets care, what it means for you,
+  what to watch, a term to know, and sources. Generated when clicked, then saved,
+  so it's instant the next time. Labelled AI-generated; never buy or sell advice;
+  says so when the headlines don't explain why.
+- **Interface.** An "Explain" button on each story in the Macro drawer, plus a short
+  "Why this matters to me" line on each theme.
+- **Claude prompt.** "Explain this week's macro news" in the MCP server, using the
+  existing tools under the Claude Pro plan.
+- **Tests.** A fake model to check the format, the rules (no buy or sell advice,
+  sources required), caching, and the "Ollama isn't running" message.
+
 ## Phase 8: In-app AI analyst panel
 
 - Provider layer for Ollama and a free cloud tier, fed the same fact pack as the
