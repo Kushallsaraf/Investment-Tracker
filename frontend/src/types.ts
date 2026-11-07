@@ -658,3 +658,63 @@ export type NewsPayload = {
   warnings: string[];
   sources: string[];
 };
+
+export type MacroIndicator = {
+  key: string;
+  label: string;
+  unit: "%" | "K" | "$" | "pts" | "index";
+  group: string;
+  frequency?: string;
+  note?: string;
+  available: boolean;
+  reason?: string;
+  value?: number;
+  as_of?: string;
+  previous?: number | null;
+  previous_as_of?: string | null;
+  change?: number | null;
+  compared_with?: string;
+  history?: number[];
+  stale?: boolean;
+};
+
+export type MacroEvent = { date: string; name: string; impact: "high" | "medium" | "low"; detail: string; source: string };
+
+export type MacroTheme = {
+  key: string;
+  label: string;
+  count: number;
+  last_day: number;
+  net: number | null;
+  sectors: string[];
+  holdings: Array<{ symbol: string; weight: number | null }>;
+  holdings_weight: number | null;
+};
+
+export type MacroHeadline = {
+  id: string;
+  title: string;
+  summary: string | null;
+  url: string;
+  publisher: string;
+  published_at: string;
+  themes: string[];
+  sentiment: { label: "positive" | "neutral" | "negative"; net: number } | null;
+};
+
+export type MacroSnapshot = {
+  generated_at: string;
+  fred_configured: boolean;
+  indicators: { items: MacroIndicator[]; unavailable?: string; source?: string };
+  calendar: { events: MacroEvent[]; days?: number; warnings: string[]; unavailable?: string | null };
+  news: {
+    headlines: MacroHeadline[];
+    themes: MacroTheme[];
+    days: number;
+    sentiment_reason: string | null;
+    fetched_at: string | null;
+    stale: boolean;
+    warnings: string[];
+    sources: string[];
+  };
+};

@@ -50,7 +50,7 @@ EIGHT_K_ITEMS = {
 logger = logging.getLogger("investment_tracker.news")
 
 
-def _item_id(symbol: str, url: str) -> str:
+def item_id(symbol: str, url: str) -> str:
     return hashlib.sha1(f"{symbol}|{url}".encode()).hexdigest()
 
 
@@ -58,6 +58,25 @@ def describe_8k(items: str | None) -> str:
     codes = [code.strip() for code in (items or "").split(",") if code.strip() and code.strip() != "9.01"]
     labels = [EIGHT_K_ITEMS.get(code, f"Item {code}") for code in codes]
     return "; ".join(labels) or "Current report"
+
+
+def score_pending(
+    repository: NewsRepository, scorer: Scorer | None, rows: list[dict[str, Any]]
+) -> str | None:
+    """Score unscored headlines. Returns why scoring is unavailable, or None when it worked."""
+    pending = [row for row in rows if row["kind"] == "HEADLINE" and row["scored_at"] is None]
+    if scorer is None:
+        return None if not pending else "FinBERT is not installed (pip install -e '.[sentiment]')"
+    if not pending:
+        return None
+    try:
+        scores = scorer.score([row["title"] for row in pending])
+    except Exception as exc:
+        logger.warning("Sentiment scoring failed: %s", exc)
+        return f"FinBERT could not run ({type(exc).__name__})"
+    by_id = {row["id"]: score for row, score in zip(pending, scores, strict=True)}
+    repository.save_scores(by_id, scorer.model)
+    return None
 
 
 class NewsService:
@@ -98,7 +117,7 @@ class NewsService:
             codes = items_by_index[index] if index < len(items_by_index) else ""
             filings.append(
                 {
-                    "id": _item_id(symbol, url),
+                    "id": item_id(symbol, url),
                     "kind": "FILING",
                     "title": f"{form}: {describe_8k(codes)}",
                     "summary": None,
@@ -117,7 +136,7 @@ class NewsService:
             headlines = self.provider.headlines(symbol)
             failures.update(headlines.get("failures") or {})
             for item in headlines["items"]:
-                items.append({**item, "id": _item_id(symbol, item["url"]), "kind": "HEADLINE"})
+                items.append({**item, "id": item_id(symbol, item["url"]), "kind": "HEADLINE"})
         except Exception as exc:
             failures["headlines"] = f"{type(exc).__name__}: {exc}"
         if not is_etf:
@@ -128,21 +147,7 @@ class NewsService:
         self.repository.save_items(symbol, items, failures, now.isoformat(timespec="seconds"))
 
     def _score(self, rows: list[dict[str, Any]]) -> str | None:
-        """Score unscored headlines. Returns why scoring is unavailable, or None when it worked."""
-        pending = [row for row in rows if row["kind"] == "HEADLINE" and row["scored_at"] is None]
-        if self.scorer is None:
-            return None if not pending else "FinBERT is not installed (pip install -e '.[sentiment]')"
-        if not pending:
-            return None
-        try:
-            scores = self.scorer.score([row["title"] for row in pending])
-        except Exception as exc:
-            logger.warning("Sentiment scoring failed: %s", exc)
-            return f"FinBERT could not run ({type(exc).__name__})"
-        self.repository.save_scores(
-            {row["id"]: score for row, score in zip(pending, scores, strict=True)}, self.scorer.model
-        )
-        return None
+        return score_pending(self.repository, self.scorer, rows)
 
     def news(self, raw_symbol: str) -> dict[str, Any]:
         symbol = normalize_symbol(raw_symbol)

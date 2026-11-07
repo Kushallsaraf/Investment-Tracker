@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getMarketStrip } from "./api";
 import { AppShell, TOP_TABS, type TopTab } from "./components/AppShell";
 import { Drawer } from "./components/Drawer";
+import { MacroPanel } from "./components/MacroPanel";
 import { McpSetupPanel } from "./components/McpSetupPanel";
 import { PortfolioApp } from "./portfolio/PortfolioApp";
 import { CommandBar } from "./research/CommandBar";
@@ -46,6 +47,7 @@ export function App() {
   const [symbol, setSymbol] = useState(route.symbol);
   const [strip, setStrip] = useState<StripItem[] | null>(null);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [macroOpen, setMacroOpen] = useState(false);
 
   const loadStrip = useCallback(() => {
     void getMarketStrip().then(setStrip).catch(() => setStrip([]));
@@ -86,8 +88,12 @@ export function App() {
       search={<CommandBar onSubmit={openSymbol} />}
       strip={<MarketStrip items={strip} onOpen={openSymbol} />}
       onMcp={() => setMcpOpen(true)}
+      onMacro={() => setMacroOpen(true)}
     >
       {activeTab === "Research" ? <ResearchView symbol={symbol} onOpenSymbol={openSymbol} /> : <PortfolioApp onOpenSymbol={openSymbol} />}
+      <Drawer open={macroOpen} eyebrow="Markets" title="Macro" subtitle="World events, upcoming reports and the latest economic data" wide onClose={() => setMacroOpen(false)}>
+        <MacroPanel />
+      </Drawer>
       <Drawer open={mcpOpen} eyebrow="Claude Desktop" title="MCP Server" subtitle="Connect Claude to your research data" onClose={() => setMcpOpen(false)}>
         <McpSetupPanel />
       </Drawer>

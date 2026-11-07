@@ -8,9 +8,11 @@ from typing import Any
 from app.config import settings
 from app.database import Database
 from app.journal_repository import JournalRepository
+from app.macro_repository import MacroRepository
 from app.market_repository import MarketRepository
 from app.news_repository import NewsRepository
-from app.providers.news import RssNewsProvider
+from app.providers.fred import FedCalendarClient, FredClient
+from app.providers.news import MacroNewsProvider, RssNewsProvider
 from app.providers.sec import SecClient
 from app.repository import PortfolioRepository
 from app.sec_repository import SecRepository
@@ -20,6 +22,7 @@ from app.services.exit_plans import ExitPlanService
 from app.services.fundamentals import FundamentalsService
 from app.services.insiders import InsiderService
 from app.services.journal import JournalService
+from app.services.macro import MacroService
 from app.services.market import MarketService
 from app.services.news import NewsService
 from app.services.peers import PeerService
@@ -47,6 +50,7 @@ class Services:
     insiders: InsiderService
     peers: PeerService
     news: NewsService
+    macro: MacroService
 
 
 def build_services(
@@ -57,6 +61,9 @@ def build_services(
     sec_client: Any = None,
     news: Any = None,
     scorer: Any = "auto",
+    fred: Any = None,
+    fed_calendar: Any = None,
+    macro_news: Any = None,
 ) -> Services:
     """Build every service on one database. Tests pass fake providers; the app uses the real ones.
 
@@ -71,6 +78,8 @@ def build_services(
     sec_repository = SecRepository(database)
     sec = SecDataService(sec_repository, sec_client or SecClient(settings.sec_user_agent))
     fundamentals = FundamentalsService(sec, market)
+    news_repository = NewsRepository(database)
+    headline_scorer = default_scorer() if scorer == "auto" else scorer
     return Services(
         database=database,
         portfolio_repository=portfolio_repository,
@@ -87,10 +96,19 @@ def build_services(
         insiders=InsiderService(sec, market),
         peers=PeerService(sec, market, fundamentals, sec_repository),
         news=NewsService(
-            NewsRepository(database),
+            news_repository,
             news or RssNewsProvider(),
             sec=sec,
             market=market,
-            scorer=default_scorer() if scorer == "auto" else scorer,
+            scorer=headline_scorer,
+        ),
+        macro=MacroService(
+            MacroRepository(database),
+            news_repository,
+            fred=fred or FredClient(settings.fred_api_key),
+            fed_calendar=fed_calendar or FedCalendarClient(),
+            news=macro_news or MacroNewsProvider(),
+            scorer=headline_scorer,
+            portfolio_repository=portfolio_repository,
         ),
     )

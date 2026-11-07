@@ -15,6 +15,7 @@ import type {
   IncomePayload,
   InsiderActivity,
   InvestmentProfile,
+  MacroSnapshot,
   McpSetup,
   NewsPayload,
   Note,
@@ -373,4 +374,8 @@ export async function getMcpSetup(): Promise<McpSetup> {
 
 export async function getNews(symbol: string): Promise<NewsPayload> {
   return responseJson<NewsPayload>(await fetch(`/api/market/${encodeURIComponent(symbol)}/news`));
+}
+
+export async function getMacro(): Promise<MacroSnapshot> {
+  return responseJson<MacroSnapshot>(await fetch("/api/macro"));
 }

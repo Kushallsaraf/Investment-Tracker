@@ -194,6 +194,31 @@ const newsPayload = {
   sources: ["Yahoo Finance RSS", "Nasdaq RSS", "SEC EDGAR 8-K filings"],
 };
 
+const macroSnapshot = {
+  generated_at: "2026-11-06T15:00:00+00:00", fred_configured: true,
+  indicators: { source: "FRED", items: [
+    { key: "unemployment", label: "Unemployment rate", unit: "%", group: "Jobs", frequency: "monthly", available: true, value: 4.1, as_of: "2026-10-01", previous: 4.2, previous_as_of: "2026-09-01", change: -0.1, compared_with: "previous release" },
+    { key: "curve", label: "10-year minus 2-year", unit: "pts", group: "Rates", available: true, value: -0.12, as_of: "2026-11-05", previous: 0.1, previous_as_of: "2026-10-06", change: -0.22, compared_with: "about a month earlier" },
+    { key: "gdp", label: "Real GDP growth", unit: "%", group: "Growth", available: false, reason: "FRED returned HTTP 500" },
+  ] },
+  calendar: { days: 45, warnings: [], unavailable: null, events: [
+    { date: "2026-12-04", name: "Jobs report", impact: "high", detail: "Payrolls and the unemployment rate", source: "FRED" },
+    { date: "2026-12-09", name: "Fed rate decision (FOMC)", impact: "high", detail: "Rate decision with economic projections", source: "Federal Reserve" },
+  ] },
+  news: {
+    days: 7, sentiment_reason: null, fetched_at: "2026-11-06T15:00:00+00:00", stale: false, warnings: [], sources: ["CNBC", "MarketWatch", "Federal Reserve"],
+    themes: [
+      { key: "geopolitics", label: "War and geopolitics", count: 2, last_day: 1, net: -0.5, sectors: ["Energy", "Industrials"], holdings: [{ symbol: "XOM", weight: 0.063 }], holdings_weight: 0.063 },
+      { key: "rates", label: "Fed and rates", count: 1, last_day: 0, net: 0.02, sectors: ["Financials"], holdings: [], holdings_weight: null },
+      { key: "trade", label: "Trade and tariffs", count: 0, last_day: 0, net: null, sectors: ["Industrials"], holdings: [], holdings_weight: null },
+    ],
+    headlines: [
+      { id: "m1", title: "Oil jumps as Iran conflict threatens supply", summary: null, url: "https://example.com/m1", publisher: "CNBC", published_at: "2026-11-06T13:00:00+00:00", themes: ["geopolitics"], sentiment: { label: "negative", net: -0.6 } },
+      { id: "m2", title: "Powell signals patience on rate cuts", summary: null, url: "https://example.com/m2", publisher: "MarketWatch", published_at: "2026-11-05T13:00:00+00:00", themes: ["rates"], sentiment: { label: "neutral", net: 0.02 } },
+    ],
+  },
+};
+
 function journalFor(symbol: string, decision: string | null = null) {
   return {
     symbol, instrument_id: decision ? "instrument-9" : null,
@@ -261,6 +286,7 @@ function createFetch(overrides: Record<string, unknown> = {}) {
       warnings: ["Income is calculated only from activities recorded in this application."],
     } });
     if (url === "/api/journal") return response({ journal });
+    if (url === "/api/macro") return response(macroSnapshot);
     if (url === "/api/mcp/setup") return response({
       server_name: "investment-tracker",
       config: { mcpServers: { "investment-tracker": { command: "/repo/.venv/bin/python", args: ["-m", "app.mcp_server"], env: { PYTHONPATH: "/repo/backend", PORTFOLIO_MANAGER_SEC_USER_AGENT: "Your Name your.email@example.com" } } } },
@@ -709,5 +735,27 @@ describe("Investment Tracker", () => {
     expect(drawer.getByText("negative −0.70")).toBeInTheDocument();
     expect(drawer.getByRole("link", { name: "8-K: Earnings results" })).toBeInTheDocument();
     expect(drawer.getByText(/not a signal/)).toBeInTheDocument();
+  });
+  it("shows world news by theme, upcoming reports and the latest data in the Macro drawer", async () => {
+    vi.stubGlobal("fetch", createFetch());
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Macro" }));
+    const drawer = within(await screen.findByRole("dialog", { name: "Macro" }));
+    const world = within(await drawer.findByRole("region", { name: "This week in the world" }));
+    expect(world.getByText("Your holdings: XOM · 6.3%")).toBeInTheDocument();
+    expect(world.queryByText("Trade and tariffs")).not.toBeInTheDocument();
+    expect(world.getAllByRole("link")).toHaveLength(2);
+    fireEvent.click(world.getByRole("button", { name: /War and geopolitics/ }));
+    expect(world.getAllByRole("link").map((link) => link.textContent)).toEqual(["Oil jumps as Iran conflict threatens supply"]);
+
+    const calendar = within(drawer.getByRole("region", { name: "Coming up" }));
+    expect(calendar.getByText("Fed rate decision (FOMC)")).toBeInTheDocument();
+    expect(calendar.getAllByText("High impact")).toHaveLength(2);
+
+    const data = within(drawer.getByRole("region", { name: "Latest data" }));
+    expect(data.getByText("4.1%")).toBeInTheDocument();
+    expect(data.getByText(/vs prior · October 2026/)).toBeInTheDocument();
+    expect(data.getByText("Inverted")).toBeInTheDocument();
+    expect(data.getByText(/Not available · FRED returned HTTP 500/)).toBeInTheDocument();
   });
 });

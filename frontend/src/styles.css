@@ -75,7 +75,8 @@ a { color: var(--accent); text-underline-offset: 3px; }
 button.strip-item:hover .strip-label { color: var(--text); }
 .strip-label { color: var(--muted); }
 .strip-note { color: var(--muted); font-family: var(--sans); font-size: 12px; }
-.header-link { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; color: var(--muted); background: transparent; font-size: 13px; }
+.header-link { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; color: var(--muted); background: transparent; font-size: 13px; }
+.macro-link { margin-left: auto; color: var(--text); }
 .header-link:hover { color: var(--text); border-color: var(--line2); }
 .header-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--claude); }
 .top-tabs { display: flex; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 4px; }
@@ -537,3 +538,46 @@ input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; accent-color:
 .news-chip { border: 1px solid var(--line2); border-radius: 999px; padding: 0 8px; font-family: var(--mono); font-size: 11px; text-transform: capitalize; }
 .news-chip.positive { border-color: #1f4a37; color: var(--up); }
 .news-chip.negative { border-color: #5a2a2e; color: var(--down); }
+
+/* Macro */
+.macro-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr); gap: 24px 28px; }
+.macro-main, .macro-side { display: grid; gap: 24px; align-content: start; min-width: 0; }
+.macro-foot { grid-column: 1 / -1; display: grid; gap: 6px; }
+.macro-themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.macro-theme { display: grid; gap: 4px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; color: var(--text); background: var(--panel); text-align: left; }
+.macro-theme:hover { border-color: var(--line2); }
+.macro-theme[aria-pressed="true"] { border-color: var(--accent); background: var(--surface); }
+.macro-theme-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; }
+.macro-theme-head strong { font-size: 14px; font-weight: 600; }
+.macro-theme-head span { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.macro-theme-tone { color: var(--soft); font-size: 12px; }
+.macro-theme-holdings { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.macro-tag { border: 1px solid var(--line2); border-radius: 999px; padding: 0 8px; color: var(--soft); font-size: 11px; }
+.macro-calendar { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.macro-calendar > li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; border-bottom: 1px solid var(--grid); padding: 10px 0; }
+.macro-calendar > li:first-child { padding-top: 0; }
+.macro-date { display: grid; gap: 2px; }
+.macro-date strong { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+.macro-date span { color: var(--muted); font-size: 12px; }
+.macro-calendar ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.macro-calendar ul li { display: grid; grid-template-columns: 10px minmax(0, 1fr); align-items: start; gap: 10px; }
+.macro-calendar ul li > span:not(.visually-hidden) { display: grid; gap: 1px; }
+.macro-calendar strong { font-size: 13.5px; font-weight: 500; }
+.macro-calendar small { color: var(--muted); font-size: 12px; }
+.impact { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--line2); }
+.impact.high { background: var(--down); }
+.impact.medium { background: var(--warn); }
+.macro-group { display: grid; gap: 8px; }
+.macro-group-label { color: var(--soft); font-size: 12px; font-weight: 500; }
+.macro-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.macro-stat { display: grid; gap: 3px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.macro-stat.alert { border-color: #5c4b26; }
+.macro-stat-label { color: var(--muted); font-size: 12px; }
+.macro-stat strong { font-family: var(--mono); font-size: 18px; font-weight: 500; }
+.macro-stat small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.macro-stat b { font-family: var(--mono); font-weight: 500; }
+.macro-stat b.up { color: var(--soft); }
+.macro-stat b.down { color: var(--soft); }
+@media (max-width: 900px) {
+  .macro-layout { grid-template-columns: 1fr; }
+}

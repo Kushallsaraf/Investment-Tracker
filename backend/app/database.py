@@ -391,6 +391,16 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         );
         """,
     ),
+    (
+        8,
+        """
+        CREATE TABLE IF NOT EXISTS macro_cache (
+            cache_key TEXT PRIMARY KEY,
+            fetched_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

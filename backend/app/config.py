@@ -23,6 +23,7 @@ class Settings:
     host: str
     port: int
     sec_user_agent: str | None
+    fred_api_key: str | None
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -36,6 +37,8 @@ class Settings:
             port=int(os.getenv("PORTFOLIO_MANAGER_PORT", "8742")),
             # SEC asks automated clients to identify themselves with a name and contact email.
             sec_user_agent=os.getenv("PORTFOLIO_MANAGER_SEC_USER_AGENT", "").strip() or None,
+            # A free key from fredaccount.stlouisfed.org; macro data stays unavailable without one.
+            fred_api_key=os.getenv("FRED_API_KEY", "").strip() or None,
         )
 
 

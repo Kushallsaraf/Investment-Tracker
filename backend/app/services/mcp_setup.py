@@ -23,6 +23,7 @@ READ_TOOLS: dict[str, str] = {
     "get_peers": "Side-by-side comparison with peers",
     "get_insider_activity": "Open-market insider buys and sales (Form 4)",
     "get_news_sentiment": "Recent headlines, local FinBERT sentiment, 7-day trend, and 8-K filings",
+    "get_macro_snapshot": "Economic data, upcoming reports and Fed meetings, and world news by theme",
     "get_my_notes": "Your notes, decision, review triggers and exit plans",
     "get_watchlist": "Watchlist tickers with their latest close",
     "get_position": "Your position, decision and accepted exit plan",

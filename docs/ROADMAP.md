@@ -104,10 +104,15 @@ hosted demo. The in-app AI analyst panel (Ollama plus a free cloud tier) is unch
 - Headlines from free RSS feeds and SEC 8-K filings; FinBERT scores run locally,
   with a 7-day trend. Adds the `get_news_sentiment` MCP tool.
 
-## Phase 7: Macro and markets
+## Phase 7: Macro (built)
 
-- Sector ETF heatmap; Fed funds, yield curve, and CPI from FRED (free API key);
-  economic calendar. Adds the `get_macro_snapshot` MCP tool.
+- World and economy headlines grouped by theme (war and geopolitics, trade, energy,
+  the Fed, inflation, jobs, China, growth, policy) and linked to the holdings in
+  each theme's sectors.
+- Upcoming market-moving reports from FRED's release calendar plus FOMC meetings.
+- Latest economic data from FRED (free API key).
+- Adds the `get_macro_snapshot` MCP tool. The sector heatmap was dropped as not
+  worth the space.
 
 ## Phase 8: In-app AI analyst panel
 

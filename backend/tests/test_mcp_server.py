@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from app.database import Database
 from app.mcp_server import NOT_AVAILABLE, create_server, mark_missing
+from app.providers.fred import FredClient
 from app.services.container import Services, build_services
 from app.services.mcp_setup import READ_TOOLS as SETUP_READ_TOOLS
 from app.services.mcp_setup import WRITE_TOOLS as SETUP_WRITE_TOOLS
@@ -24,6 +25,7 @@ READ_TOOLS = {
     "get_peers",
     "get_insider_activity",
     "get_news_sentiment",
+    "get_macro_snapshot",
     "get_my_notes",
     "get_watchlist",
     "get_position",
@@ -42,6 +44,11 @@ class StaticNews:
             "feed": "Yahoo Finance",
         }
         return {"items": [item], "failures": {}, "fetched_at": item["published_at"]}
+
+
+class NoMeetings:
+    def fomc_meetings(self) -> list[dict[str, Any]]:
+        return []
 
 
 class OfflineSec(FakeSec):
@@ -63,6 +70,9 @@ def _services(tmp_path: Path, sec: Any = None) -> Services:
         sec_client=sec or FakeSec(),
         news=StaticNews(),
         scorer=None,
+        fred=FredClient(None),
+        fed_calendar=NoMeetings(),
+        macro_news=StaticNews(),
     )
 
 
@@ -125,6 +135,14 @@ def test_news_sentiment_marks_missing_scores(tmp_path: Path) -> None:
     assert news["sentiment"]["available"] is False
     assert "not installed" in news["sentiment"]["reason"]
     assert news["fetched_at"] != NOT_AVAILABLE
+
+
+def test_macro_snapshot_reports_a_missing_fred_key(tmp_path: Path) -> None:
+    server = create_server(_services(tmp_path))
+    macro = _call(server, "get_macro_snapshot")
+    assert macro["fred_configured"] is False
+    assert "FRED_API_KEY" in macro["indicators"]["unavailable"]
+    assert macro["generated_at"]
 
 
 def test_unreachable_sources_are_reported_as_not_available(tmp_path: Path) -> None:

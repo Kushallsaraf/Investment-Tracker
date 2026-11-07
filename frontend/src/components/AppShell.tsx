@@ -29,6 +29,7 @@ export function AppShell({
   search,
   strip,
   onMcp,
+  onMacro,
   children,
 }: PropsWithChildren<{
   activeTab: TopTab;
@@ -36,6 +37,7 @@ export function AppShell({
   search: ReactNode;
   strip: ReactNode;
   onMcp: () => void;
+  onMacro: () => void;
 }>) {
   return (
     <div className="app-shell">
@@ -46,6 +48,7 @@ export function AppShell({
         </div>
         <div className="header-search">{search}</div>
         {strip}
+        <button type="button" className="header-link macro-link" onClick={onMacro}>Macro</button>
         <button type="button" className="header-link" onClick={onMcp}>
           <span className="header-dot" aria-hidden="true" />MCP Server
         </button>

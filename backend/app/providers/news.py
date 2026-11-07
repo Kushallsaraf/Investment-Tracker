@@ -17,6 +17,12 @@ FEEDS: tuple[tuple[str, str], ...] = (
     ("Yahoo Finance", "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"),
     ("Nasdaq", "https://www.nasdaq.com/feed/rssoutbound?symbol={symbol}"),
 )
+MACRO_FEEDS: tuple[tuple[str, str], ...] = (
+    ("CNBC World", "https://www.cnbc.com/id/100727362/device/rss/rss.html"),
+    ("CNBC Economy", "https://www.cnbc.com/id/20910258/device/rss/rss.html"),
+    ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+    ("Federal Reserve", "https://www.federalreserve.gov/feeds/press_all.xml"),
+)
 _TAGS = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 _STYLE = re.compile(r"@media|\{[^}]*\}")
@@ -97,19 +103,30 @@ class RssNewsProvider:
     def headlines(self, symbol: str) -> dict[str, Any]:
         """Headlines from every feed that answered, plus the reason any feed failed."""
         provider_symbol = quote(symbol.replace(".", "-"), safe="-")
-        items: list[dict[str, Any]] = []
-        failures: dict[str, str] = {}
-        for publisher, template in FEEDS:
-            try:
-                response = self.client.get(template.format(symbol=provider_symbol))
-                response.raise_for_status()
-                items.extend(parse_feed(response.text, publisher))
-            except (httpx.HTTPError, ElementTree.ParseError) as exc:
-                failures[publisher] = f"{type(exc).__name__}"
-        if failures and len(failures) == len(FEEDS):
-            raise ConnectionError("No news feed could be reached: " + ", ".join(failures))
-        return {
-            "items": dedupe(items),
-            "failures": failures,
-            "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        }
+        return fetch_feeds(self.client, [(name, url.format(symbol=provider_symbol)) for name, url in FEEDS])
+
+
+class MacroNewsProvider(RssNewsProvider):
+    """World, economy, and Federal Reserve headlines that move the whole market."""
+
+    def headlines(self, symbol: str = "") -> dict[str, Any]:
+        return fetch_feeds(self.client, list(MACRO_FEEDS))
+
+
+def fetch_feeds(client: httpx.Client, feeds: list[tuple[str, str]]) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    failures: dict[str, str] = {}
+    for publisher, url in feeds:
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            items.extend(parse_feed(response.text, publisher))
+        except (httpx.HTTPError, ElementTree.ParseError) as exc:
+            failures[publisher] = f"{type(exc).__name__}"
+    if failures and len(failures) == len(feeds):
+        raise ConnectionError("No news feed could be reached: " + ", ".join(failures))
+    return {
+        "items": dedupe(items),
+        "failures": failures,
+        "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }

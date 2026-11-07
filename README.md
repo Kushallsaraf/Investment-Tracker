@@ -82,6 +82,25 @@ market pulse (SPY, QQQ, VIX, and the 10-year yield).
 - **Ask AI** is a placeholder for the in-app AI panel.
 - **How this works** explains each data source and how fresh it is.
 
+**Macro** (header button) opens a wide drawer with the market-wide picture:
+
+- **This week in the world:** headlines from CNBC (world and economy), MarketWatch,
+  and Federal Reserve press releases, grouped into themes such as war and
+  geopolitics, trade and tariffs, energy and oil, the Fed and rates, inflation,
+  jobs, China, growth, and government policy. Headlines that match no macro theme
+  (personal-finance columns, for example) are left out. Each theme shows how many
+  headlines it had this week, their FinBERT tone, and the holdings in the sectors
+  it usually affects. That link is by sector, so it shows where a theme tends to
+  matter, not what will happen.
+- **Coming up:** the next 45 days of market-moving reports from FRED's release
+  calendar (jobs report, CPI, PCE, GDP, PPI, retail sales, JOLTS, jobless claims,
+  consumer sentiment, industrial production) and Fed rate decisions from the
+  Federal Reserve's FOMC calendar, each marked high, medium, or low impact.
+- **Latest data:** unemployment, payrolls, jobless claims, CPI, core CPI, core
+  PCE, the Fed funds target, 2- and 10-year Treasury yields, the 10y–2y spread
+  (flagged when inverted), real GDP growth, retail sales, consumer sentiment, and
+  WTI oil, each with the period it covers and the change from the prior reading.
+
 **Portfolio** shows the total value, gain, income, price coverage, a sector
 allocation bar, and the holdings list. Selecting a holding opens its details with
 a link to Research. Toolbar buttons open the detail views as drawers:
@@ -128,7 +147,7 @@ server for Claude Desktop (it works with a Claude Pro plan). It runs over stdio 
 this computer and uses the same database and services as the dashboard.
 
 - **Read tools:** `get_quote`, `get_chart_summary`, `get_fundamentals`, `get_peers`,
-  `get_insider_activity`, `get_news_sentiment`, `get_my_notes`, `get_watchlist`, `get_position`. Every
+  `get_insider_activity`, `get_news_sentiment`, `get_macro_snapshot`, `get_my_notes`, `get_watchlist`, `get_position`. Every
   response carries as-of dates, and missing values read `NOT AVAILABLE` instead of
   being left blank.
 - **Write tools:** `add_note`, `add_to_watchlist`, and `save_exit_plan`. The last
@@ -207,6 +226,20 @@ To run all tests and the production frontend build:
 ```bash
 ./scripts/test
 ```
+
+## FRED setup
+
+Macro data and the release calendar come from FRED, which needs a free API key.
+Request one at fredaccount.stlouisfed.org (API Keys) and add it to `.env`:
+
+```bash
+FRED_API_KEY=your_key
+```
+
+Restart `./scripts/dev` after adding it. Without a key, the Macro drawer still
+shows world news and Fed meeting dates. Series are cached for 6 hours and release
+dates for 12, and a saved copy is shown, marked stale, if FRED can't be reached.
+The key never appears in error messages.
 
 ## SEC EDGAR setup
 

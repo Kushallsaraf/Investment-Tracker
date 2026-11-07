@@ -141,6 +141,14 @@ def create_server(services: Services | None = None) -> MCPServer:
         return _read(lambda: svc.news.news(symbol), symbol)
 
     @server.tool(annotations=READ)
+    def get_macro_snapshot() -> dict[str, Any]:
+        """The macro picture: latest US economic data (jobs, inflation, rates, yield curve, GDP,
+        retail sales, sentiment, oil) with dates, market-moving reports and Fed meetings in the next
+        45 days, and this week's world and economy headlines grouped by theme (war and geopolitics,
+        trade, energy, the Fed, China and more) with the portfolio holdings each theme usually touches."""
+        return _read(svc.macro.snapshot)
+
+    @server.tool(annotations=READ)
     def get_my_notes(symbol: str) -> dict[str, Any]:
         """The investor's notes, current decision, open review triggers, and exit plans for a ticker."""
         return _read(lambda: svc.journal.symbol_journal(symbol), symbol)
