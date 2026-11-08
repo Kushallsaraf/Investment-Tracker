@@ -718,3 +718,21 @@ export type MacroSnapshot = {
     sources: string[];
   };
 };
+
+export type AnalystStatus = {
+  provider: string;
+  model: string;
+  local: boolean;
+  ready: boolean;
+  reason?: string;
+  quick_prompts: Array<{ key: string; label: string; prompt: string }>;
+};
+
+export type AnalystFacts = {
+  symbol: string;
+  sections: Array<{ title: string; lines: string[]; available: boolean }>;
+  text: string;
+  generated_at: string;
+};
+
+export type ChatTurn = { role: "user" | "assistant"; content: string };

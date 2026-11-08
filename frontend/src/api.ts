@@ -1,6 +1,9 @@
 import type {
   ActivityInput,
   ActivityPayload,
+  AnalystFacts,
+  AnalystStatus,
+  ChatTurn,
   AIReview,
   Analytics,
   ChartPayload,
@@ -378,4 +381,38 @@ export async function getNews(symbol: string): Promise<NewsPayload> {
 
 export async function getMacro(): Promise<MacroSnapshot> {
   return responseJson<MacroSnapshot>(await fetch("/api/macro"));
+}
+
+export async function getAnalystStatus(): Promise<AnalystStatus> {
+  return responseJson<AnalystStatus>(await fetch("/api/ai/status"));
+}
+
+export async function getAnalystFacts(symbol: string): Promise<AnalystFacts> {
+  return responseJson<AnalystFacts>(await fetch(`/api/ai/${encodeURIComponent(symbol)}/facts`));
+}
+
+/** Stream an answer, calling onText with each piece as the model writes it. */
+export async function streamAnalyst(
+  symbol: string,
+  messages: ChatTurn[],
+  onText: (text: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`/api/ai/${encodeURIComponent(symbol)}/chat`, {
+    method: "POST",
+    headers: WRITE_HEADERS,
+    body: JSON.stringify({ messages }),
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    await responseJson(response);
+    throw new Error(`Request failed (${response.status})`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onText(decoder.decode(value, { stream: true }));
+  }
 }

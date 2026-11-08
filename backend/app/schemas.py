@@ -70,6 +70,15 @@ class ExitPlanCreate(BaseModel):
     reasoning: str = Field(min_length=1, max_length=10_000)
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4_000)
+
+
+class AnalystChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=12)
+
+
 class LoadDemoRequest(BaseModel):
     confirm: Literal["LOAD DEMO"]
 

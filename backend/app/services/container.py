@@ -12,11 +12,13 @@ from app.macro_repository import MacroRepository
 from app.market_repository import MarketRepository
 from app.news_repository import NewsRepository
 from app.providers.fred import FedCalendarClient, FredClient
+from app.providers.llm import build_chat_model
 from app.providers.news import MacroNewsProvider, RssNewsProvider
 from app.providers.sec import SecClient
 from app.repository import PortfolioRepository
 from app.sec_repository import SecRepository
 from app.services.activities import ActivityService
+from app.services.analyst import AnalystService
 from app.services.analytics import AnalyticsService
 from app.services.exit_plans import ExitPlanService
 from app.services.fundamentals import FundamentalsService
@@ -51,6 +53,7 @@ class Services:
     peers: PeerService
     news: NewsService
     macro: MacroService
+    analyst: AnalystService
 
 
 def build_services(
@@ -64,6 +67,7 @@ def build_services(
     fred: Any = None,
     fed_calendar: Any = None,
     macro_news: Any = None,
+    chat_model: Any = None,
 ) -> Services:
     """Build every service on one database. Tests pass fake providers; the app uses the real ones.
 
@@ -80,28 +84,28 @@ def build_services(
     fundamentals = FundamentalsService(sec, market)
     news_repository = NewsRepository(database)
     headline_scorer = default_scorer() if scorer == "auto" else scorer
+    portfolio = PortfolioService(portfolio_repository, price_provider=prices)
+    exit_plans = ExitPlanService(journal_repository, journal)
+    insiders = InsiderService(sec, market)
+    news_service = NewsService(
+        news_repository, news or RssNewsProvider(), sec=sec, market=market, scorer=headline_scorer
+    )
     return Services(
         database=database,
         portfolio_repository=portfolio_repository,
         journal_repository=journal_repository,
-        portfolio=PortfolioService(portfolio_repository, price_provider=prices),
+        portfolio=portfolio,
         sectors=sectors,
         activities=ActivityService(portfolio_repository),
         analytics=AnalyticsService(portfolio_repository, sectors),
         research=ResearchService(journal_repository, portfolio_repository, sectors),
         market=market,
         journal=journal,
-        exit_plans=ExitPlanService(journal_repository, journal),
+        exit_plans=exit_plans,
         fundamentals=fundamentals,
-        insiders=InsiderService(sec, market),
+        insiders=insiders,
         peers=PeerService(sec, market, fundamentals, sec_repository),
-        news=NewsService(
-            news_repository,
-            news or RssNewsProvider(),
-            sec=sec,
-            market=market,
-            scorer=headline_scorer,
-        ),
+        news=news_service,
         macro=MacroService(
             MacroRepository(database),
             news_repository,
@@ -110,5 +114,15 @@ def build_services(
             news=macro_news or MacroNewsProvider(),
             scorer=headline_scorer,
             portfolio_repository=portfolio_repository,
+        ),
+        analyst=AnalystService(
+            chat_model or build_chat_model(settings),
+            market=market,
+            fundamentals=fundamentals,
+            insiders=insiders,
+            news=news_service,
+            journal=journal,
+            exit_plans=exit_plans,
+            portfolio=portfolio,
         ),
     )

@@ -139,10 +139,14 @@ local. If built, this becomes the first piece of Phase 8.
 - **Tests.** A fake model to check the format, the rules (no buy or sell advice,
   sources required), caching, and the "Ollama isn't running" message.
 
-## Phase 8: In-app AI analyst panel
+## Phase 8: In-app AI analyst panel (built)
 
-- Provider layer for Ollama and a free cloud tier, fed the same fact pack as the
-  panels. Answers cite the on-screen numbers and never compute prices or signals.
+- Chat about the ticker on screen through Ollama (default `qwen2.5:7b`) or any
+  OpenAI-compatible cloud API, streamed as it's written.
+- Grounded in a compact fact pack the investor can inspect; answers cite the
+  numbers, never compute prices or signals, and never give buy or sell advice.
+- Quick prompts, stop, and save-to-notes. The optional macro explainers above
+  would reuse this model connection.
 
 ## Phase 9: Strategy engine and backtests
 

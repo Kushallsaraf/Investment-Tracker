@@ -79,7 +79,14 @@ market pulse (SPY, QQQ, VIX, and the 10-year yield).
   - **Strategies:** a placeholder until the strategy engine lands.
 - **Exit plan** shows Claude's proposals with Accept and Reject, the accepted
   plan, and a form to write your own. See [Exit plans](#exit-plans).
-- **Ask AI** is a placeholder for the in-app AI panel.
+- **Ask AI** is a chat about the ticker on screen, run by a local model through
+  Ollama (Qwen 2.5 7B by default). It answers from a compact pack of the screen's
+  facts: price and trend, SEC valuation, insider activity, this week's news, and
+  your own position, decision, exit plan, and notes. "What the AI sees" shows that
+  pack. It cites the numbers it uses, says when something isn't available, never
+  sets prices, targets, or signals, and never says to buy or sell. Answers stream
+  as they're written, quick prompts cover common questions, and an answer can be
+  saved to your notes.
 - **How this works** explains each data source and how fresh it is.
 
 **Macro** (header button) opens a wide drawer with the market-wide picture:
@@ -226,6 +233,30 @@ To run all tests and the production frontend build:
 ```bash
 ./scripts/test
 ```
+
+## AI analyst setup
+
+The AI analyst uses [Ollama](https://ollama.com) on this computer by default:
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+Optional `.env` settings:
+
+```bash
+AI_MODEL=qwen2.5:14b            # any model you have pulled; bigger is slower
+OLLAMA_URL=http://127.0.0.1:11434
+# Or a faster OpenAI-compatible cloud model, such as Groq's free tier:
+AI_PROVIDER=openai
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_API_KEY=your_key
+AI_MODEL=llama-3.3-70b-versatile
+```
+
+A cloud model receives the fact pack for the ticker you ask about, including your
+position in it. On a 16 GB Mac a 7B model writes about 4–20 words per second
+depending on free memory, so answers take roughly 15–50 seconds.
 
 ## FRED setup
 

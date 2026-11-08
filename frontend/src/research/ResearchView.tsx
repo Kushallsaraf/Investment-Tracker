@@ -26,6 +26,7 @@ import type {
   Technicals,
   WatchlistItem,
 } from "../types";
+import { AnalystPanel } from "./AnalystPanel";
 import { ExitPlanPanel } from "./ExitPlanPanel";
 import { NewsPanel, sentimentWord } from "./NewsPanel";
 import { NotesPanel } from "./NotesPanel";
@@ -299,12 +300,8 @@ export function ResearchView({ symbol, onOpenSymbol }: { symbol: string; onOpenS
       <Drawer open={drawer === "exit"} eyebrow={symbol} title="Exit plan" subtitle="Target, stop and review date, with the reasoning" onClose={close}>
         <ExitPlanPanel symbol={symbol} plans={exitPlans} onChanged={loadJournal} />
       </Drawer>
-      <Drawer open={drawer === "ai"} eyebrow={symbol} title="Ask AI" subtitle="Planned for a later phase" onClose={close}>
-        <PlannedPanel title="AI analyst" source="Claude Desktop through the local MCP server · Ollama locally" lines={[
-          "Ask questions about this ticker in plain English.",
-          "Answers use the numbers on this screen and cite them. The AI never computes prices or signals itself.",
-          "One-click prompts: bull vs bear, explain the setup, summarize the latest 10-Q.",
-        ]} />
+      <Drawer open={drawer === "ai"} eyebrow={symbol} title="Ask AI" subtitle="A research assistant that explains this screen's numbers" onClose={close}>
+        <AnalystPanel symbol={symbol} onNoteSaved={loadJournal} />
       </Drawer>
       <Drawer open={drawer === "strategy"} eyebrow={symbol} title="Strategies" subtitle="Planned for a later phase" onClose={close}>
         <PlannedPanel title="Strategy checks" source="Your rules, evaluated in code · backtested on daily history" lines={[

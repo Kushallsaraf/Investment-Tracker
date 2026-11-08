@@ -287,6 +287,24 @@ function createFetch(overrides: Record<string, unknown> = {}) {
     } });
     if (url === "/api/journal") return response({ journal });
     if (url === "/api/macro") return response(macroSnapshot);
+    if (url === "/api/ai/status") return response({
+      provider: "Ollama", model: "qwen2.5:7b", local: true, ready: true,
+      quick_prompts: [{ key: "setup", label: "Explain the setup", prompt: "Explain the current technical setup in plain English." }],
+    });
+    if (url === "/api/ai/SPY/facts") return response({
+      symbol: "SPY", generated_at: "2026-11-07T12:00:00+00:00", text: "",
+      sections: [{ title: "Price and trend", available: true, lines: ["Close 765.37 on 2026-09-30 (daily data)."] }],
+    });
+    if (url === "/api/ai/SPY/chat") {
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(controller) {
+          for (const piece of ["SPY is in an **uptrend**.\n", "- RSI 64.2 (neutral)\n", "- Close 765.37 on Sep 30"]) controller.enqueue(encoder.encode(piece));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    }
     if (url === "/api/mcp/setup") return response({
       server_name: "investment-tracker",
       config: { mcpServers: { "investment-tracker": { command: "/repo/.venv/bin/python", args: ["-m", "app.mcp_server"], env: { PYTHONPATH: "/repo/backend", PORTFOLIO_MANAGER_SEC_USER_AGENT: "Your Name your.email@example.com" } } } },
@@ -757,5 +775,31 @@ describe("Investment Tracker", () => {
     expect(data.getByText(/vs prior · October 2026/)).toBeInTheDocument();
     expect(data.getByText("Inverted")).toBeInTheDocument();
     expect(data.getByText(/Not available · FRED returned HTTP 500/)).toBeInTheDocument();
+  });
+  it("streams an AI answer grounded in the screen's facts and saves it as a note", async () => {
+    const fetchMock = createFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ask AI" }));
+    const drawer = within(await screen.findByRole("dialog", { name: "Ask AI" }));
+    expect(await drawer.findByText(/qwen2.5:7b · runs on this computer/)).toBeInTheDocument();
+
+    fireEvent.click(drawer.getByRole("button", { name: "What the AI sees" }));
+    expect(await drawer.findByText("Close 765.37 on 2026-09-30 (daily data).")).toBeInTheDocument();
+
+    fireEvent.click(drawer.getByRole("button", { name: "Explain the setup" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/ai/SPY/chat", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ messages: [{ role: "user", content: "Explain the current technical setup in plain English." }] }),
+    })));
+    expect(await drawer.findByText("uptrend")).toBeInTheDocument();
+    expect(drawer.getByText("RSI 64.2 (neutral)").tagName).toBe("LI");
+
+    fireEvent.click(await drawer.findByRole("button", { name: "Save to notes" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/market/SPY/notes", expect.objectContaining({
+      body: expect.stringContaining("AI analyst (qwen2.5:7b)"),
+    })));
+    expect(await drawer.findByRole("button", { name: "Saved to notes" })).toBeDisabled();
+    expect(drawer.getByText(/Not investment advice/)).toBeInTheDocument();
   });
 });

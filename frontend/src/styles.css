@@ -581,3 +581,28 @@ input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; accent-color:
 @media (max-width: 900px) {
   .macro-layout { grid-template-columns: 1fr; }
 }
+
+/* AI analyst */
+.analyst { display: grid; gap: 14px; }
+.analyst-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; color: var(--soft); font-size: 13px; }
+.analyst-status span { display: inline-flex; align-items: center; gap: 8px; }
+.ok-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--up); }
+.analyst-facts { display: grid; gap: 10px; max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: var(--bg); }
+.analyst-facts strong { font-size: 12px; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
+.analyst-facts p { margin: 3px 0 0; color: var(--soft); font-family: var(--mono); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.analyst-facts small { color: var(--muted); font-size: 12px; }
+.analyst-thread { display: grid; gap: 12px; }
+.analyst-turn.user { justify-self: end; max-width: 85%; border-radius: 12px 12px 4px 12px; padding: 8px 12px; background: var(--raised); }
+.analyst-turn.user p { margin: 0; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+.analyst-turn.assistant { border-left: 2px solid var(--accent); padding: 2px 0 2px 14px; }
+.analyst-answer { color: var(--text); font-size: 14px; line-height: 1.6; }
+.analyst-answer p { margin: 0 0 8px; }
+.analyst-answer ul { margin: 0 0 8px; padding-left: 18px; }
+.analyst-answer li { margin-bottom: 4px; }
+.analyst-wait { color: var(--muted); }
+.analyst-tools { display: flex; gap: 12px; font-size: 12px; }
+.analyst-prompts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; border: 0; padding: 0; }
+.analyst-chip { min-height: 32px; border: 1px solid var(--line2); border-radius: 999px; padding: 0 12px; color: var(--soft); background: transparent; font-size: 13px; }
+.analyst-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.analyst-form { display: grid; gap: 8px; }
+.analyst-form textarea { min-height: 64px; font-size: 14px; }

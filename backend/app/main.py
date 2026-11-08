@@ -8,16 +8,18 @@ from typing import TypeVar
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import settings
+from app.providers.llm import LlmUnavailableError
 from app.providers.prices import UnsupportedSymbolError
 from app.providers.sec import SecNotConfiguredError
 from app.schemas import (
     ActivityCreate,
     AIReviewCreate,
+    AnalystChatRequest,
     ClaudePromptUpsert,
     DecisionUpdate,
     DeletePortfolioDataRequest,
@@ -33,6 +35,7 @@ from app.schemas import (
     WatchlistAdd,
 )
 from app.services.activities import ActivityService
+from app.services.analyst import AnalystService
 from app.services.analytics import AnalyticsService
 from app.services.container import build_services
 from app.services.exit_plans import ExitPlanService
@@ -87,6 +90,7 @@ _insider_service = _services.insiders
 _peer_service = _services.peers
 _news_service = _services.news
 _macro_service = _services.macro
+_analyst_service = _services.analyst
 
 
 def portfolio_service() -> PortfolioService:
@@ -111,6 +115,10 @@ def journal_service() -> JournalService:
 
 def exit_plan_service() -> ExitPlanService:
     return _exit_plan_service
+
+
+def analyst_service() -> AnalystService:
+    return _analyst_service
 
 
 def macro_service() -> MacroService:
@@ -168,6 +176,8 @@ def _market_call(action: Callable[[], T]) -> T:
         return action()
     except UnsupportedSymbolError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LlmUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except KeyError as exc:
@@ -257,6 +267,28 @@ def update_market_peers(
 def reset_market_peers(symbol: str, service: PeerService = Depends(peer_service)) -> dict:
     _sec_call(lambda: service.reset(symbol))
     return _sec_call(lambda: service.comparison(symbol))
+
+
+@app.get("/api/ai/status")
+def ai_status(service: AnalystService = Depends(analyst_service)) -> dict:
+    return service.status()
+
+
+@app.get("/api/ai/{symbol}/facts")
+def ai_facts(symbol: str, service: AnalystService = Depends(analyst_service)) -> dict:
+    return _market_call(lambda: service.facts(symbol))
+
+
+@app.post("/api/ai/{symbol}/chat", dependencies=[Depends(require_local_write)])
+def ai_chat(
+    symbol: str, request: AnalystChatRequest, service: AnalystService = Depends(analyst_service)
+) -> StreamingResponse:
+    messages = [message.model_dump() for message in request.messages]
+    answer = _market_call(lambda: service.chat(symbol, messages))
+    # Plain text, streamed as the model writes it.
+    return StreamingResponse(
+        answer, media_type="text/plain; charset=utf-8", headers={"Cache-Control": "no-store"}
+    )
 
 
 @app.get("/api/macro")
